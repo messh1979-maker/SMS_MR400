@@ -2,11 +2,10 @@ import { useEffect, useState } from "react";
 import { BookOpen, Cable, Globe, RefreshCw, Settings2, ShieldCheck } from "lucide-react";
 import BentoBox from "@/components/BentoBox";
 import { Button } from "@/components/ui/button";
+import { apiRequest, BASE } from "@/lib/api";
 import { faDigits } from "@/lib/format";
 import { showToast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
-
-const API = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:5000";
 
 const ENDPOINTS = [
   { method: "GET", path: "/api/status", desc: "وضعیت اتصال، شبکه و سیم‌کارت" },
@@ -29,15 +28,14 @@ export default function SettingsPage() {
   async function testConnection() {
     setChecking(true);
     try {
-      const res = await fetch(`${API}/api/status`);
-      const data = await res.json();
-      setStatus({ connected: res.ok, ...data });
+      const data = await apiRequest<Status & { router_host?: string }>("/api/status");
+      setStatus({ ...data, connected: true });
       setLastCheck(new Date().toLocaleTimeString("fa-IR"));
-      showToast(res.ok ? "اتصال به مودم برقرار است." : "خطا در دریافت وضعیت", res.ok ? false : true);
-    } catch {
+      showToast("اتصال به مودم برقرار است.");
+    } catch (err) {
       setStatus({ connected: false });
       setLastCheck(new Date().toLocaleTimeString("fa-IR"));
-      showToast("سرور پشتیبان در دسترس نیست.", true);
+      showToast(err instanceof Error ? err.message : "سرور پشتیبان در دسترس نیست.", true);
     } finally {
       setChecking(false);
     }
@@ -105,7 +103,7 @@ export default function SettingsPage() {
         <div className="space-y-2">
           {[
             { label: "رابط کاربری", value: "Vazirmatn · راست‌به‌چپ", dir: "rtl" as const },
-            { label: "سرور پشتیبان", value: API, dir: "ltr" as const },
+            { label: "سرور پشتیبان", value: BASE, dir: "ltr" as const },
             { label: "دوره نمودار", value: "۷ روز اخیر", dir: "rtl" as const },
             { label: "ذخیره مخاطبین", value: "دستگاه شما (localStorage)", dir: "rtl" as const },
           ].map((row) => (

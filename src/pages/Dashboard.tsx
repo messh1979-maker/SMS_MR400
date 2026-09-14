@@ -12,10 +12,11 @@ import {
   Send,
   Users,
 } from "lucide-react";
-import AreaChart from "@/components/AreaChart";
+import BarChart from "@/components/BarChart";
 import BentoBox from "@/components/BentoBox";
 import Skeleton from "@/components/Skeleton";
 import { Button } from "@/components/ui/button";
+import { apiRequest } from "@/lib/api";
 import { faDigits, formatTime } from "@/lib/format";
 import { getCategory } from "@/lib/sms";
 import type { ActivityPoint, PageId, SmsMessage, StatsData } from "@/lib/types";
@@ -30,8 +31,6 @@ type Status = {
   unread_sms?: number;
 };
 
-const api = (path: string) => `${import.meta.env.VITE_API_BASE_URL ?? "http://localhost:5000"}${path}`;
-
 function useDashboard() {
   const [status, setStatus] = useState<Status>({ connected: null });
   const [stats, setStats] = useState<StatsData | null>(null);
@@ -43,12 +42,12 @@ function useDashboard() {
     setRefreshing(true);
     try {
       const [s, st, a, inb] = await Promise.all([
-        fetch(api("/api/status")).then((r) => r.json()),
-        fetch(api("/api/stats")).then((r) => r.json()),
-        fetch(api("/api/activity?days=7")).then((r) => r.json()),
-        fetch(api("/api/inbox")).then((r) => r.json()),
+        apiRequest<Status>("/api/status"),
+        apiRequest<StatsData>("/api/stats"),
+        apiRequest<{ series: ActivityPoint[] }>("/api/activity?days=7"),
+        apiRequest<{ messages: SmsMessage[] }>("/api/inbox"),
       ]);
-      setStatus({ connected: true, ...s });
+      setStatus({ ...s, connected: true });
       setStats(st);
       setActivity(Array.isArray(a.series) ? a.series : []);
       const msgs = Array.isArray(inb.messages) ? inb.messages.slice(0, 6) : [];
@@ -193,16 +192,18 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: PageId) => v
       <BentoBox title="فعالیت ۷ روز اخیر" icon={Activity} className="lg:col-span-2">
         <div className="mb-3 flex items-center gap-5 text-xs font-bold text-slate-700 dark:text-slate-200">
           <span className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full bg-blue-600 dark:bg-blue-400" /> پیامک‌های ارسالی
+            <span className="h-2.5 w-2.5 rounded-full bg-green-500" /> پیامک‌های ارسالی
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full bg-sky-400" /> پیامک‌های دریافتی
+            <span className="h-2.5 w-2.5 rounded-full bg-blue-600" /> پیامک‌های دریافتی
           </span>
         </div>
         {d.activity.length === 0 ? (
           <Skeleton className="h-[220px] w-full" />
         ) : (
-          <AreaChart data={d.activity} />
+          <div className="w-full">
+            <BarChart data={d.activity} />
+          </div>
         )}
       </BentoBox>
 

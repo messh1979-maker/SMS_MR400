@@ -7,10 +7,9 @@ import { Button } from "@/components/ui/button";
 import { faDigits, formatTime } from "@/lib/format";
 import { findCategory, getCategory, normalizeNumber } from "@/lib/sms";
 import { showToast } from "@/lib/toast";
+import { apiRequest } from "@/lib/api";
 import type { SmsMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
-
-const API = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:5000";
 
 export default function InboxPage() {
   const [messages, setMessages] = useState<SmsMessage[]>([]);
@@ -24,8 +23,7 @@ export default function InboxPage() {
   async function load() {
     setLoading(true);
     try {
-      const res = await fetch(`${API}/api/inbox`);
-      const data = await res.json();
+      const data = await apiRequest<{ messages: SmsMessage[] }>("/api/inbox");
       setMessages(Array.isArray(data.messages) ? data.messages : []);
     } catch {
       showToast("خطا در دریافت صندوق", true);
@@ -71,13 +69,7 @@ export default function InboxPage() {
     if (selected.size === 0) return;
     setDeleting(true);
     try {
-      const res = await fetch(`${API}/api/sms`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: [...selected] }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? "حذف ناموفق");
+      await apiRequest("/api/sms", { method: "DELETE", body: JSON.stringify({ ids: [...selected] }) });
       showToast(`${faDigits(selected.size)} پیامک حذف شد.`);
       setSelected(new Set());
       setConfirmOpen(false);

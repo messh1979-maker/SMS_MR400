@@ -10,9 +10,8 @@ import HistoryPage from "@/pages/HistoryPage";
 import ContactsPage from "@/pages/ContactsPage";
 import SettingsPage from "@/pages/SettingsPage";
 import { showToast } from "@/lib/toast";
+import { apiRequest } from "@/lib/api";
 import type { Contact, PageId } from "@/lib/types";
-
-const API = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:5000";
 
 export default function App() {
   const [dark, setDark] = useState<boolean>(() => {
@@ -20,6 +19,7 @@ export default function App() {
     if (saved) return saved === "dark";
     return window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
   });
+
   const [page, setPage] = useState<PageId>("dashboard");
   const [collapsed, setCollapsed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -35,8 +35,8 @@ export default function App() {
 
   const refreshStatus = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/api/status`);
-      setConnected(res.ok);
+      await apiRequest("/api/status");
+      setConnected(true);
     } catch {
       setConnected(false);
     }
@@ -63,28 +63,16 @@ export default function App() {
     setPaletteOpen(true);
     if (contacts.length > 0) return;
     try {
-      const res = await fetch(`${API}/api/contacts`);
-      const data = await res.json();
+      const data = await apiRequest<{ contacts: Contact[] }>("/api/contacts");
       setContacts(Array.isArray(data.contacts) ? data.contacts : []);
-    } catch {
-      /* بی‌صدا */
-    }
+    } catch { /* بی‌صدا */ }
   }, [contacts.length]);
 
-  const handlePickContact = useCallback((c: Contact) => {
-    setPrefill(c.number);
-    setPage("send");
-  }, []);
-
-  const handleSendTo = useCallback((c: Contact) => {
-    setPrefill(c.number);
-    setPage("send");
-  }, []);
-
+  const handlePickContact = useCallback((c: Contact) => { setPrefill(c.number); setPage("send"); }, []);
+  const handleSendTo = useCallback((c: Contact) => { setPrefill(c.number); setPage("send"); }, []);
   const consumePrefill = useCallback(() => setPrefill(null), []);
-
   const navigate = useCallback((p: PageId) => setPage(p), []);
-
+  
   const refresh = useCallback(() => {
     setRefreshNonce((n) => n + 1);
     refreshStatus();
@@ -95,33 +83,17 @@ export default function App() {
     <div dir="rtl" className="flex min-h-screen bg-[radial-gradient(80%_60%_at_50%_-10%,rgba(59,130,246,0.10),transparent),radial-gradient(60%_50%_at_90%_110%,rgba(129,140,248,0.08),transparent)]">
       <Sidebar page={page} onNavigate={navigate} collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar
-          page={page}
-          dark={dark}
-          onToggleTheme={() => setDark((v) => !v)}
-          onOpenCommand={openPalette}
-          onRefresh={refresh}
-          refreshing={false}
-          connected={connected}
-        />
+        <Topbar page={page} dark={dark} onToggleTheme={() => setDark((v) => !v)} onOpenCommand={openPalette} onRefresh={refresh} refreshing={false} connected={connected} />
         <main className="flex-1 p-4 sm:p-6">
           {page === "dashboard" && <Dashboard key={refreshNonce} onNavigate={navigate} />}
-          {page === "send" && (
-            <SendPage key={refreshNonce} prefillNumber={prefill} onConsumePrefill={consumePrefill} />
-          )}
+          {page === "send" && <SendPage key={refreshNonce} prefillNumber={prefill} onConsumePrefill={consumePrefill} />}
           {page === "inbox" && <InboxPage key={refreshNonce} />}
           {page === "history" && <HistoryPage key={refreshNonce} />}
           {page === "contacts" && <ContactsPage key={refreshNonce} onSendTo={handleSendTo} />}
           {page === "settings" && <SettingsPage key={refreshNonce} />}
         </main>
       </div>
-      <CommandPalette
-        open={paletteOpen}
-        onClose={() => setPaletteOpen(false)}
-        contacts={contacts}
-        onNavigate={navigate}
-        onPickContact={handlePickContact}
-      />
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} contacts={contacts} onNavigate={navigate} onPickContact={handlePickContact} />
       <ToastHost />
     </div>
   );
