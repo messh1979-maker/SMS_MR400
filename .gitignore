@@ -1,0 +1,28 @@
+# Node / Vite
+node_modules/
+dist/
+*.local
+.env
+.env.local
+.env.*.local
+
+# Python / Flask
+backend/venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# داده‌های runtime (شامل شماره‌ها و پیامک‌ها)
+backend/sent_log.json
+
+# لاگ‌ها
+*.log
+logs/
+
+# سیستمی
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.history/
