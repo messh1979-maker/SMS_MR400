@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import {
-  Plus, Search, Edit, Trash2, Phone, MapPin, Building2, User, Loader2
+  Plus, Search, Edit, Trash2, Phone, MapPin, Building2, User, Loader2, Send
 } from "lucide-react";
 import Modal from "@/components/Modal";
 import ConfirmDialog from "@/components/ConfirmDialog";
@@ -265,7 +265,7 @@ const toggleSort = (key: keyof ContactDetail) => {
                       <div className="flex items-center justify-end gap-1">
                         {onSendTo && (
                           <Button variant="ghost" size="sm" onClick={() => handleSendTo(c)} className="text-green-600 hover:bg-green-50 dark:hover:bg-green-950/20" title="ارسال پیامک">
-                            <Phone className="h-5 w-5" />
+                            <Send className="h-5 w-5" />
                           </Button>
                         )}
                         <Button variant="ghost" size="sm" onClick={() => openEditModal(c)} className="text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/20" title="ویرایش">
