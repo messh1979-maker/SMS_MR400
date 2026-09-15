@@ -174,7 +174,7 @@ export default function SendPage({
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="مثال: 09123456789"
-                className={cn("border", validPhone || !phone ? "border-gray-300" : "border-red-500")}
+                className={cn("border", validPhone || !phone ? "border-input" : "border-red-500")}
               />
               <Button
                 type="button"
@@ -198,8 +198,7 @@ export default function SendPage({
               onChange={(e) => setMessage(e.target.value)}
               rows={5}
               dir="rtl"
-              style={{ background: "var(--card)", color: "var(--foreground)" }}
-              className="w-full p-2 rounded-md border border-gray-300 placeholder:text-muted-foreground"
+              className="w-full p-2 rounded-md border border-input bg-card text-card-foreground placeholder:text-muted-foreground"
               placeholder="متن پیام خود را اینجا بنویسید..."
             />
             <div className="flex justify-between text-xs text-muted-foreground mt-1">
@@ -275,7 +274,7 @@ export default function SendPage({
                 <select
                   value={maxRetries}
                   onChange={(e) => setMaxRetries(Number(e.target.value))}
-                  className="w-full p-2 rounded-md border border-gray-300 bg-white dark:bg-slate-800 dark:text-slate-100 font-mono text-sm"
+                  className="w-full p-2 rounded-md border border-input bg-card text-card-foreground font-mono text-sm"
                 >
                   {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
                     <option key={n} value={n}>{n} {n === 1 ? "بار" : "بار"}</option>
