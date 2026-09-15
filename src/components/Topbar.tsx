@@ -15,9 +15,11 @@ const TITLES: Record<PageId, { title: string; subtitle: string }> = {
 };
 
 const BRAND_HEADER = (
-  <div className="flex flex-col items-start gap-0.5 text-right" dir="rtl" aria-hidden="true">
-    <span className="text-sm font-bold text-slate-900 dark:text-white">سامانه مدیریت پیامکی</span>
-    <span className="text-[11px] font-medium text-muted-foreground">اداره برق و مخابرات - شرکت آب و فاضلاب خراسان رضوی</span>
+  <div className="absolute inset-0 flex items-center justify-center pointer-events-none" aria-hidden="true">
+    <div className="flex flex-col items-center gap-0.5 text-center" dir="rtl">
+      <span className="text-sm font-bold text-slate-900 dark:text-white">سامانه مدیریت پیامکی</span>
+      <span className="text-[11px] font-medium text-muted-foreground">اداره برق و مخابرات - شرکت آب و فاضلاب خراسان رضوی</span>
+    </div>
   </div>
 );
 
@@ -45,77 +47,80 @@ export default function Topbar({
   return (
     <header
       dir="rtl"
-      className="flex items-center justify-between gap-4 border-b border-slate-200/70 bg-background/80 px-5 py-3 backdrop-blur-xl dark:border-white/5"
+      className="relative flex items-center justify-between gap-4 border-b border-slate-200/70 bg-background/80 px-5 py-3 backdrop-blur-xl dark:border-white/5"
     >
-      <div className="min-w-0 flex-1 text-right">
-        <h2 className="text-base font-extrabold text-slate-900 dark:text-white">{t.title}</h2>
-        <p className="hidden truncate text-xs text-muted-foreground sm:block">{t.subtitle}</p>
-      </div>
+      {/* برند هدر - وسط‌چین مطلق */}
+      {BRAND_HEADER}
 
-      {/* برند هدر - در سمت چپ بعد از عنوان با فاصله */}
-      <div className="flex-shrink-0 px-5">{BRAND_HEADER}</div>
+      <div className="flex w-full items-center justify-between gap-4">
+        <div className="min-w-0 flex-1 text-right">
+          <h2 className="text-base font-extrabold text-slate-900 dark:text-white">{t.title}</h2>
+          <p className="hidden truncate text-xs text-muted-foreground sm:block">{t.subtitle}</p>
+        </div>
 
-      <div className="flex shrink-0 items-center gap-2">
-        <span
-          className={cn(
-            "hidden items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium sm:flex",
-            connected === null
-              ? "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
-              : connected
-                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
-                : "bg-red-100 text-red-600 dark:bg-red-950/50 dark:text-red-400"
-          )}
-        >
+        <div className="flex shrink-0 items-center gap-2">
+          {/* قرص اتصال */}
           <span
             className={cn(
-              "h-1.5 w-1.5 rounded-full",
+              "hidden items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium sm:flex",
               connected === null
-                ? "bg-slate-400"
+                ? "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
                 : connected
-                  ? "bg-emerald-500"
-                  : "bg-red-500"
+                  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+                  : "bg-red-100 text-red-600 dark:bg-red-950/50 dark:text-red-400"
             )}
-          />
-          {connected === null ? "در حال بررسی..." : connected ? "متصل به خط" : "قطع"}
-        </span>
-
-        {/* سیگنال مودم در هدر */}
-        {connected !== null && (
-          <span className="flex items-center gap-1.5" aria-label={`سطح سیگنال ${faDigits(signal)} درصد`} title={`سیگنال: ${faDigits(signal)}٪`}>
-            <Signal className="h-3.5 w-3.5 text-blue-600 dark:text-blue-300" />
-            <span className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
-              <span
-                className={cn("block h-full rounded-full", signal > 50 ? "bg-emerald-500" : signal > 20 ? "bg-amber-500" : "bg-red-500")}
-                style={{ width: `${signal}%` }}
-              />
-            </span>
-            <span className="fa-nums text-[10px] font-medium text-muted-foreground">{faDigits(signal)}٪</span>
+          >
+            <span
+              className={cn(
+                "h-1.5 w-1.5 rounded-full",
+                connected === null
+                  ? "bg-slate-400"
+                  : connected
+                    ? "bg-emerald-500"
+                    : "bg-red-500"
+              )}
+            />
+            {connected === null ? "در حال بررسی..." : connected ? "متصل به خط" : "قطع"}
           </span>
-        )}
 
-        <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshing} className="gap-1.5 text-xs">
-          <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
-          به‌روزرسانی
-        </Button>
+          {/* سیگنال مودم */}
+          {connected !== null && (
+            <span className="flex items-center gap-1.5" aria-label={`سطح سیگنال ${faDigits(signal)} درصد`} title={`سیگنال: ${faDigits(signal)}٪`}>
+              <Signal className="h-3.5 w-3.5 text-blue-600 dark:text-blue-300" />
+              <span className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+                <span
+                  className={cn("block h-full rounded-full", signal > 50 ? "bg-emerald-500" : signal > 20 ? "bg-amber-500" : "bg-red-500")}
+                  style={{ width: `${signal}%` }}
+                />
+              </span>
+              <span className="fa-nums text-[10px] font-medium text-muted-foreground">{faDigits(signal)}٪</span>
+            </span>
+          )}
 
-        <button
-          onClick={onOpenCommand}
-          className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] text-muted-foreground shadow-sm transition-colors hover:bg-slate-50 dark:border-white/10 dark:bg-slate-900 dark:hover:bg-slate-800"
-          title="جست‌وجوی سریع"
-        >
-          <Command className="h-3.5 w-3.5" />
-          <kbd className="hidden items-center gap-0.5 rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 font-sans text-[10px] font-medium text-slate-500 sm:flex dark:border-white/10 dark:bg-slate-800 dark:text-slate-300">
-            Ctrl K
-          </kbd>
-        </button>
+          <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshing} className="gap-1.5 text-xs">
+            <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
+            به‌روزرسانی
+          </Button>
 
-        <button
-          onClick={onToggleTheme}
-          className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition-all hover:bg-slate-50 dark:border-white/10 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-slate-800"
-          title={dark ? "حالت روشن" : "حالت تاریک"}
-        >
-          {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-        </button>
+          <button
+            onClick={onOpenCommand}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] text-muted-foreground shadow-sm transition-colors hover:bg-slate-50 dark:border-white/10 dark:bg-slate-900 dark:hover:bg-slate-800"
+            title="جست‌وجوی سریع"
+          >
+            <Command className="h-3.5 w-3.5" />
+            <kbd className="hidden items-center gap-0.5 rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 font-sans text-[10px] font-medium text-slate-500 sm:flex dark:border-white/10 dark:bg-slate-800 dark:text-slate-300">
+              Ctrl K
+            </kbd>
+          </button>
+
+          <button
+            onClick={onToggleTheme}
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition-all hover:bg-slate-50 dark:border-white/10 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-slate-800"
+            title={dark ? "حالت روشن" : "حالت تاریک"}
+          >
+            {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </button>
+        </div>
       </div>
     </header>
   );
