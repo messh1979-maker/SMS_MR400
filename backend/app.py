@@ -18,10 +18,21 @@ from threading import Lock
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, make_response
 from flask_cors import CORS
 
+import csv
+import io
+
 import jdatetime
+
+from categorize import classify_message, INBOX_CATEGORIES
+from import_export import (
+    MAX_IMPORT_BYTES,
+    HEADER_MAP,
+    parse_rows,
+    sniff_file,
+)
 
 load_dotenv(encoding="utf-8-sig")
 
@@ -68,6 +79,7 @@ def init_db():
         department  TEXT    NOT NULL DEFAULT '',
         company     TEXT    NOT NULL DEFAULT '',
         province    TEXT    NOT NULL DEFAULT '',
+        notes       TEXT    NOT NULL DEFAULT '',
         created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
         updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
     );
@@ -94,24 +106,20 @@ def init_db():
     CREATE INDEX IF NOT EXISTS idx_scheduled_status ON scheduled_sms(status);
     CREATE INDEX IF NOT EXISTS idx_scheduled_retries ON scheduled_sms(retries);
     """)
+    # مهاجرت idempotent برای دیتابیس‌های قدیمی‌تر بدون ستون notes
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(contacts)").fetchall()]
+    if "notes" not in cols:
+        conn.execute("ALTER TABLE contacts ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
+        conn.commit()
     conn.close()
 
 init_db()
 
 # --------------------------------------------------------------- لاگ پیامک‌ها --
 SENT_LOG_FILE = Path(__file__).resolve().parent / "sent_log.json"
+_log_lock = Lock()
 
-def _load_sent_log() -> list:
-    if not SENT_LOG_FILE.exists():
-        return []
-    try:
-        return json.loads(SENT_LOG_FILE.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return []
-
-def _append_sent_log(phone: str, message: str) -> None:
-    entries = _load_sent_log()
-    entries.append({"phone": phone, "message": message, "sent_at": datetime.now().isoformat(timespec="seconds")})
+def _write_sent_log(entries: list) -> None:
     try:
         fd, tmp_path = tempfile.mkstemp(dir=SENT_LOG_FILE.parent, suffix=".json")
         with os.fdopen(fd, 'w', encoding="utf-8") as f:
@@ -120,8 +128,41 @@ def _append_sent_log(phone: str, message: str) -> None:
     except OSError as e:
         logger.error("خطا در ذخیره‌سازی اتمی لاگ پیامک: %s", e)
 
+def _load_sent_log() -> list:
+    if not SENT_LOG_FILE.exists():
+        return []
+    try:
+        entries = json.loads(SENT_LOG_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    # مهاجرت تنبلی: رکوردهای قدیمی بدون id/status به‌روزرسانی می‌شوند (Soft Delete)
+    dirty = False
+    for i, e in enumerate(entries):
+        if not isinstance(e, dict):
+            continue
+        if "id" not in e:
+            e["id"] = i + 1
+            dirty = True
+        if "status" not in e:
+            e["status"] = "active"
+            e["updated_at"] = None
+            dirty = True
+    if dirty:
+        _write_sent_log(entries)
+    return entries
+
+def _append_sent_log(phone: str, message: str) -> None:
+    with _log_lock:
+        entries = _load_sent_log()
+        next_id = max((e.get("id") or 0) for e in entries if isinstance(e, dict)) + 1
+        entries.append({"id": next_id, "phone": phone, "message": message,
+                        "sent_at": datetime.now().isoformat(timespec="seconds"),
+                        "status": "active", "updated_at": None})
+        _write_sent_log(entries)
+
 # --------------------------------------------------------------- اپلیکیشن --
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = MAX_IMPORT_BYTES
 CORS(app, origins=ALLOWED_ORIGINS)
 _lock = Lock()
 
@@ -227,6 +268,14 @@ def with_modem(func):
 
 # ------------------------------------------------------- اعتبارسنجی ورودی --
 PHONE_REGEX = re.compile(r"^(09\d{9}|989\d{9})$")
+TIME_REGEX = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+_FA_INDIC_DIGITS = "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩"
+
+def _latin_digits(s: str) -> str:
+    return "".join(str(_FA_INDIC_DIGITS.index(c)) if c in _FA_INDIC_DIGITS else c for c in s)
+
+def _valid_time(hhmm: str) -> bool:
+    return bool(TIME_REGEX.match(_latin_digits(hhmm.strip())))
 
 def _valid_phone(phone: str) -> bool:
     cleaned = phone.strip().replace("+", "").replace(" ", "")
@@ -296,7 +345,12 @@ def api_send_sms(router):
 @with_modem
 def api_inbox(router):
     messages = router.get_sms()
-    return jsonify({"messages": [_sms_to_dict(m) for m in messages]})
+    out = []
+    for m in messages:
+        d = _sms_to_dict(m)
+        d["category"] = classify_message(d.get("content") or "")
+        out.append(d)
+    return jsonify({"messages": out})
 
 @app.route("/api/sms", methods=["DELETE"])
 @require_api_key
@@ -333,6 +387,8 @@ def api_stats(router):
 
     sent_map = {}
     for entry in _load_sent_log():
+        if entry.get("status", "active") != "active":
+            continue
         phone = str(entry.get("phone", "ناشناس"))
         s = sent_map.setdefault(phone, {"count": 0, "last_at": None})
         s["count"] += 1
@@ -360,6 +416,8 @@ def api_activity(router):
     today = datetime.now().date()
     sent_by = {}
     for entry in _load_sent_log():
+        if entry.get("status", "active") != "active":
+            continue
         try:
             d = datetime.fromisoformat(entry["sent_at"]).date()
             sent_by[d] = sent_by.get(d, 0) + 1
@@ -475,6 +533,75 @@ def api_contacts_delete(contact_id: int):
     logger.info("مخاطب %d حذف شد", contact_id)
     return jsonify({"success": True, "deleted": deleted})
 
+# ---------------------------- CONTACTS IMPORT / EXPORT ----------------------------
+@app.route("/api/contacts/import", methods=["POST"])
+@require_api_key
+def api_contacts_import():
+    file = request.files.get("file")
+    if not file or not file.filename:
+        return jsonify({"error": "فایلی ارسال نشده"}), 400
+    if (request.content_length or 0) > MAX_IMPORT_BYTES:
+        return jsonify({"error": "حجم فایل بیش از ۲ مگابایت است"}), 413
+    blob = file.stream.read(MAX_IMPORT_BYTES + 1)
+    if len(blob) > MAX_IMPORT_BYTES:
+        return jsonify({"error": "حجم فایل بیش از ۲ مگابایت است"}), 413
+    kind = sniff_file(blob)
+    if kind is None:
+        return jsonify({"error": "فرمت فایل مجاز نیست (.xlsx یا .csv)"}), 400
+
+    rows = list(parse_rows(blob, kind))
+    if not rows:
+        return jsonify({"error": "فایل خالی است"}), 400
+    headers = list(map(str.strip, rows[0]))
+    cols = [HEADER_MAP.get(h) for h in headers]
+    req = [c for c in ("first_name", "mobile") if c in cols]
+    if len(req) != 2:
+        return jsonify({"error": "ستون‌های نام و موبایل الزامی هستند"}), 400
+
+    conn = get_db()
+    inserted = skipped = 0
+    for raw in rows[1:]:
+        rec = dict(zip(cols, raw + [None] * (len(cols) - len(raw))))
+        first = str(rec.get("first_name") or "").strip()
+        last = str(rec.get("last_name") or "").strip()
+        mobile = re.sub(r"[^0-9]", "", str(rec.get("mobile") or "").strip())
+        if not first or not _valid_phone(mobile):
+            skipped += 1
+            continue
+        conn.execute("""INSERT OR IGNORE INTO contacts
+            (first_name, last_name, mobile, landline, city, department, company, province, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+            first, last, mobile,
+            str(rec.get("landline") or "").strip(),
+            str(rec.get("city") or "").strip(),
+            str(rec.get("department") or "").strip(),
+            str(rec.get("company") or "").strip(),
+            str(rec.get("province") or "").strip(),
+            str(rec.get("notes") or "").strip(),
+        ))
+        inserted += 1
+    conn.commit()
+    conn.close()
+    logger.info("ورود مخاطبین: %d درج، %d نادیده گرفته شد", inserted, skipped)
+    return jsonify({"success": True, "imported": inserted, "skipped": skipped})
+
+@app.route("/api/contacts/export", methods=["GET"])
+@require_api_key
+def api_contacts_export():
+    conn = get_db()
+    rows = conn.execute("""SELECT first_name, last_name, mobile, landline, city, department, company, province, notes
+                           FROM contacts ORDER BY last_name, first_name""").fetchall()
+    conn.close()
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["first_name", "last_name", "mobile", "landline", "city", "department", "company", "province", "notes"])
+    for r in rows:
+        w.writerow(list(r))
+    resp = make_response("\ufeff" + out.getvalue())
+    resp.headers["Content-Disposition"] = "attachment; filename=contacts.csv"
+    resp.mimetype = "text/csv"
+    return resp
+
 # ---------------------------- TEMPLATES CRUD ----------------------------
 @app.route("/api/templates", methods=["GET"])
 @require_api_key
@@ -542,6 +669,8 @@ def api_send_scheduled():
         scheduled_at_utc = jalali_to_utc(scheduled_at)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
+    if not _valid_time(_latin_digits(scheduled_at).split()[-1] if len(scheduled_at.split()) == 2 else ""):
+        return jsonify({"error": "قالب ساعت نامعتبر است (نمونه صحیح: 14:30)"}), 400
 
     run_date = datetime.fromisoformat(scheduled_at_utc)
     if run_date <= datetime.now(timezone.utc):
@@ -569,9 +698,13 @@ def api_send_scheduled():
 @app.route("/api/scheduled", methods=["GET"])
 @require_api_key
 def api_scheduled_list():
-    """List scheduled SMS jobs."""
+    """List scheduled SMS jobs (optionally filtered by status)."""
+    status = request.args.get("status", "").strip()
     conn = get_db()
-    rows = conn.execute("SELECT * FROM scheduled_sms ORDER BY scheduled_at_utc").fetchall()
+    if status:
+        rows = conn.execute("SELECT * FROM scheduled_sms WHERE status=? ORDER BY scheduled_at_utc", (status,)).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM scheduled_sms ORDER BY scheduled_at_utc").fetchall()
     conn.close()
     return jsonify({"scheduled": [dict(row) for row in rows]})
 
@@ -620,6 +753,8 @@ def api_scheduled_update(job_id: int):
         scheduled_at_utc = jalali_to_utc(scheduled_at)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
+    if not _valid_time(_latin_digits(scheduled_at).split()[-1] if len(scheduled_at.split()) == 2 else ""):
+        return jsonify({"error": "قالب ساعت نامعتبر است (نمونه صحیح: 14:30)"}), 400
 
     run_date = datetime.fromisoformat(scheduled_at_utc)
     if run_date <= datetime.now(timezone.utc):
@@ -669,8 +804,42 @@ def api_sms_counts():
 @app.route("/api/history", methods=["GET"])
 @require_api_key
 def api_history():
-    entries = _load_sent_log()
+    status = request.args.get("status", "active")   # active|archived|all
+    phone = request.args.get("phone", "").strip()
+    with _log_lock:
+        entries = _load_sent_log()
+        if status != "all":
+            entries = [e for e in entries if isinstance(e, dict) and e.get("status", "active") == status]
+        if phone:
+            entries = [e for e in entries if phone in str(e.get("phone", ""))]
     return jsonify({"entries": list(reversed(entries))})
+
+@app.route("/api/history/<int:entry_id>", methods=["PATCH"])
+@require_api_key
+def api_history_update(entry_id: int):
+    """Archive, restore or soft-delete a sent log entry."""
+    data = request.get_json(silent=True) or {}
+    status = str(data.get("status", "")).strip()
+    permanent = bool(data.get("permanent", False))
+    if not permanent and status not in {"archived", "deleted", "active"}:
+        return jsonify({"error": "مقدار status نامعتبر است"}), 400
+    if permanent:
+        status = "deleted"
+    with _log_lock:
+        entries = _load_sent_log()
+        ids = {e.get("id") for e in entries if isinstance(e, dict)}
+        if entry_id not in ids:
+            return jsonify({"error": "رکورد یافت نشد"}), 404
+        if permanent:
+            entries = [e for e in entries if not (isinstance(e, dict) and e.get("id") == entry_id)]
+        else:
+            for e in entries:
+                if isinstance(e, dict) and e.get("id") == entry_id:
+                    e["status"] = status
+                    e["updated_at"] = datetime.now().isoformat(timespec="seconds")
+                    break
+        _write_sent_log(entries)
+    return jsonify({"success": True})
 
 @app.errorhandler(404)
 def not_found(_):
