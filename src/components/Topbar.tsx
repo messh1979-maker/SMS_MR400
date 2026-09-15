@@ -1,6 +1,7 @@
-import { Command, Moon, RefreshCw, Sun } from "lucide-react";
+import { Command, Moon, RefreshCw, Sun, Signal } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { faDigits } from "@/lib/format";
 import type { PageId } from "@/lib/types";
 
 const TITLES: Record<PageId, { title: string; subtitle: string }> = {
@@ -21,6 +22,7 @@ export default function Topbar({
   onRefresh,
   refreshing,
   connected,
+  signalLevel,
 }: {
   page: PageId;
   dark: boolean;
@@ -29,8 +31,10 @@ export default function Topbar({
   onRefresh: () => void;
   refreshing: boolean;
   connected: boolean | null;
+  signalLevel?: number | null;
 }) {
   const t = TITLES[page];
+  const signal = Math.max(0, Math.min(100, signalLevel ?? 0));
   return (
     <header
       dir="rtl"
@@ -64,6 +68,20 @@ export default function Topbar({
           />
           {connected === null ? "در حال بررسی..." : connected ? "متصل به خط" : "قطع"}
         </span>
+
+        {/* سیگنال مودم در هدر */}
+        {connected !== null && (
+          <span className="flex items-center gap-1.5" aria-label={`سطح سیگنال ${faDigits(signal)} درصد`} title={`سیگنال: ${faDigits(signal)}٪`}>
+            <Signal className="h-3.5 w-3.5 text-blue-600 dark:text-blue-300" />
+            <span className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+              <span
+                className={cn("block h-full rounded-full", signal > 50 ? "bg-emerald-500" : signal > 20 ? "bg-amber-500" : "bg-red-500")}
+                style={{ width: `${signal}%` }}
+              />
+            </span>
+            <span className="fa-nums text-[10px] font-medium text-muted-foreground">{faDigits(signal)}٪</span>
+          </span>
+        )}
 
         <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshing} className="gap-1.5 text-xs">
           <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />

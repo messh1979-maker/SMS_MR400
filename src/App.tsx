@@ -90,8 +90,19 @@ export default function App() {
       <Sidebar page={page} onNavigate={navigate} collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} />
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="sticky top-0 z-30">
-          <Topbar page={page} dark={dark} onToggleTheme={() => setDark((v) => !v)} onOpenCommand={openPalette} onRefresh={refresh} refreshing={false} connected={modemStatus.connected} />
-          <ModemStatusBar status={modemStatus} refreshing={statusChecking} onRefresh={() => refreshStatus()} />
+          <Topbar
+            page={page}
+            dark={dark}
+            onToggleTheme={() => setDark((v) => !v)}
+            onOpenCommand={openPalette}
+            onRefresh={refresh}
+            refreshing={false}
+            connected={modemStatus.connected}
+            signalLevel={modemStatus.signal_level}
+          />
+          {page !== "dashboard" && (
+            <ModemStatusBar status={modemStatus} refreshing={statusChecking} onRefresh={() => refreshStatus()} />
+          )}
         </div>
         <main className="flex-1 p-4 sm:p-6">
           {page === "dashboard" && <Dashboard key={refreshNonce} refreshNonce={refreshNonce} onNavigate={navigate} />}
