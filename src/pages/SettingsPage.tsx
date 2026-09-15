@@ -31,6 +31,8 @@ export default function SettingsPage() {
   const [tplTitle, setTplTitle] = useState("");
   const [tplBody, setTplBody] = useState("");
   const [tplSaving, setTplSaving] = useState(false);
+  const [tplSortKey, setTplSortKey] = useState<"title" | "created_at">("title");
+  const [tplSortDir, setTplSortDir] = useState<"asc" | "desc">("asc");
 
   async function testConnection() {
     setChecking(true);
@@ -92,6 +94,17 @@ export default function SettingsPage() {
       showToast(err instanceof Error ? err.message : "خطا در حذف قالب", true);
     }
   }
+
+  function toggleTplSort(key: "title" | "created_at") {
+    setTplSortDir((d) => (tplSortKey === key && d === "asc" ? "desc" : "asc"));
+    setTplSortKey(key);
+  }
+
+  const sortedTemplates = [...templates].sort((a, b) => {
+    const av = tplSortKey === "title" ? a.title : a.created_at;
+    const bv = tplSortKey === "title" ? b.title : b.created_at;
+    return tplSortDir === "asc" ? String(av).localeCompare(String(bv)) : -String(av).localeCompare(String(bv));
+  });
 
   return (
     <div dir="rtl" className="fade-in-up grid gap-4 lg:grid-cols-2">
@@ -192,13 +205,22 @@ export default function SettingsPage() {
             </Button>
           </div>
           <div>
+            <div className="flex items-center justify-between rounded-md bg-slate-100 px-3 py-1.5 text-xs font-bold text-muted-foreground dark:bg-slate-800">
+              <span
+                className="cursor-pointer select-none hover:text-foreground"
+                onClick={() => toggleTplSort("title")}
+              >
+                عنوان قالب{tplSortKey === "title" ? (tplSortDir === "asc" ? " ↑" : " ↓") : " ↕"}
+              </span>
+              <span className="text-[10px]">{sortedTemplates.length} قالب</span>
+            </div>
             {tplLoading ? (
               <div className="flex gap-2">{[...Array(3)].map((_, i) => <div key={i} className="h-10 rounded bg-slate-100 animate-pulse" />)}</div>
-            ) : templates.length === 0 ? (
+            ) : sortedTemplates.length === 0 ? (
               <p className="text-sm text-muted-foreground">هیچ قالبی وجود ندارد.</p>
             ) : (
               <ul className="divide-y divide-slate-100 dark:divide-white/5">
-                {templates.map((t) => (
+                {sortedTemplates.map((t) => (
                   <li key={t.id} className="flex items-center justify-between py-2">
                     <div className="min-w-0">
                       <p className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">{t.title}</p>

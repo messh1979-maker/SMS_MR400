@@ -42,6 +42,8 @@ export default function ContactsPage({ onSendTo }: { onSendTo?: (c: ContactDetai
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [formData, setFormData] = useState<ContactDetail>(EMPTY_CONTACT);
   const [formErrors, setFormErrors] = useState<Partial<Record<keyof ContactDetail, string>>>({});
+  const [sortKey, setSortKey] = useState<keyof ContactDetail>("last_name");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   useEffect(() => { loadContacts(); }, []);
 
@@ -140,15 +142,34 @@ export default function ContactsPage({ onSendTo }: { onSendTo?: (c: ContactDetai
   }
 
   const filteredContacts = contacts.filter((c) => {
-    const q = normalizeNumber(search).toLowerCase();
-    if (!q) return true;
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    const qNum = normalizeNumber(search);
     return (
-      c.mobile.includes(q) ||
       c.first_name.toLowerCase().includes(q) ||
       c.last_name.toLowerCase().includes(q) ||
-      c.company.toLowerCase().includes(q)
+      c.mobile.includes(qNum) ||
+      c.company.toLowerCase().includes(q) ||
+      c.city.toLowerCase().includes(q)
     );
   });
+
+const toggleSort = (key: keyof ContactDetail) => {
+    setSortDir((d) => (sortKey === key && d === "asc" ? "desc" : "asc"));
+    setSortKey(key);
+  };
+
+  const sortedContacts = [...filteredContacts].sort((a, b) => {
+    const av = a[sortKey] ?? "";
+    const bv = b[sortKey] ?? "";
+    const cmp = String(av).localeCompare(String(bv));
+    return sortDir === "asc" ? cmp : -cmp;
+  });
+
+  function sortIndicator(key: keyof ContactDetail) {
+    if (sortKey !== key) return " ↕";
+    return sortDir === "asc" ? " ↑" : " ↓";
+  }
 
   return (
     <div dir="rtl" className="space-y-6">
@@ -156,12 +177,12 @@ export default function ContactsPage({ onSendTo }: { onSendTo?: (c: ContactDetai
         <h2 className="text-2xl font-bold">دفترچه تلفن پیشرفته</h2>
         <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
           <div className="relative flex-1">
-            <Search className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="جست‌وجو نام، نام خانوادگی، شرکت، موبایل..."
-              className="pl-10 pr-4"
+              className="pr-4"
             />
           </div>
           <div className="flex gap-2">
@@ -199,16 +220,26 @@ export default function ContactsPage({ onSendTo }: { onSendTo?: (c: ContactDetai
             <table className="w-full text-right">
               <thead>
                 <tr className="border-b border-slate-200 dark:border-white/10">
-                  <th className="px-4 py-3 text-xs font-bold text-muted-foreground uppercase">نام</th>
-                  <th className="px-4 py-3 text-xs font-bold text-muted-foreground uppercase">موبایل</th>
-                  <th className="px-4 py-3 text-xs font-bold text-muted-foreground uppercase">تلفن ثابت</th>
-                  <th className="px-4 py-3 text-xs font-bold text-muted-foreground uppercase">شرکت / بخش</th>
-                  <th className="px-4 py-3 text-xs font-bold text-muted-foreground uppercase">شهر / استان</th>
+                  {[
+                    { key: "first_name" as keyof ContactDetail, label: "نام" },
+                    { key: "mobile" as keyof ContactDetail, label: "موبایل" },
+                    { key: "landline" as keyof ContactDetail, label: "تلفن ثابت" },
+                    { key: "company" as keyof ContactDetail, label: "شرکت / بخش" },
+                    { key: "city" as keyof ContactDetail, label: "شهر / استان" },
+                  ].map(({ key, label }) => (
+                    <th
+                      key={key}
+                      className="px-4 py-3 text-xs font-bold text-muted-foreground uppercase cursor-pointer hover:text-foreground select-none"
+                      onClick={() => toggleSort(key)}
+                    >
+                      {label}{sortIndicator(key)}
+                    </th>
+                  ))}
                   <th className="px-4 py-3 text-xs font-bold text-muted-foreground uppercase">عملیات</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                {filteredContacts.map((c) => (
+                {sortedContacts.map((c) => (
                   <tr key={c.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
                     <td className="px-4 py-3">
                       <div className="font-medium text-slate-900 dark:text-slate-100">
@@ -233,8 +264,8 @@ export default function ContactsPage({ onSendTo }: { onSendTo?: (c: ContactDetai
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
                         {onSendTo && (
-                          <Button variant="ghost" size="sm" onClick={() => handleSendTo(c)} className="text-green-600 hover:bg-green-50 dark:hover:bg-green-950/20" title="ارسال پیامک">
-                            <Phone className="h-4 w-4" />
+                          <Button variant="default" size="sm" onClick={() => handleSendTo(c)} className="text-xs gap-1 bg-green-600 hover:bg-green-700" title="ارسال پیامک">
+                            <Phone className="h-3.5 w-3.5" /> ارسال
                           </Button>
                         )}
                         <Button variant="ghost" size="sm" onClick={() => openEditModal(c)} className="text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/20" title="ویرایش">
@@ -252,8 +283,8 @@ export default function ContactsPage({ onSendTo }: { onSendTo?: (c: ContactDetai
           </div>
         </Card>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {filteredContacts.map((c) => (
+<div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+           {sortedContacts.map((c) => (
             <Card key={c.id} className="flex flex-col">
               <CardContent className="flex-1 p-4 space-y-3">
                 <div className="flex items-start justify-between gap-2">
@@ -271,11 +302,11 @@ export default function ContactsPage({ onSendTo }: { onSendTo?: (c: ContactDetai
                     </div>
                   </div>
                   <div className="flex gap-1">
-                    {onSendTo && (
-                      <Button variant="ghost" size="sm" onClick={() => handleSendTo(c)} className="text-green-600" title="ارسال پیامک">
-                        <Phone className="h-4 w-4" />
-                      </Button>
-                    )}
+{onSendTo && (
+                        <Button variant="default" size="sm" onClick={() => handleSendTo(c)} className="text-xs gap-1 bg-green-600 hover:bg-green-700" title="ارسال پیامک">
+                          <Phone className="h-3.5 w-3.5" /> ارسال
+                        </Button>
+                      )}
                     <Button variant="ghost" size="sm" onClick={() => openEditModal(c)} className="text-blue-600" title="ویرایش">
                       <Edit className="h-4 w-4" />
                     </Button>
