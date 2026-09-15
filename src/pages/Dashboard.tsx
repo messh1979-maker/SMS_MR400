@@ -122,18 +122,6 @@ export default function Dashboard({ onNavigate, refreshNonce }: { onNavigate: (p
 
   return (
     <div dir="rtl" className="fade-in-up grid gap-4 lg:grid-cols-3">
-      {/* هدر برند — وسط‌چین دقیق (Task 3) */}
-      <div className="lg:col-span-3">
-        <div className="flex w-full flex-col items-center justify-center text-center">
-          <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-            سامانه مدیریت پیامکی
-          </h1>
-          <h2 className="mt-1 text-sm font-medium text-muted-foreground">
-            اداره برق و مخابرات - شرکت آب و فاضلاب خراسان رضوی
-          </h2>
-        </div>
-      </div>
-
       {/* کاشی‌های آماری */}
       <div className="grid gap-4 sm:grid-cols-2 lg:col-span-3 lg:grid-cols-4">
         <StatTile

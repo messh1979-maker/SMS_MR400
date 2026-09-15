@@ -14,6 +14,13 @@ const TITLES: Record<PageId, { title: string; subtitle: string }> = {
   settings: { title: "تنظیمات و API", subtitle: "اتصال، پیکربندی و مستندات" },
 };
 
+const BRAND_HEADER = (
+  <div className="flex flex-col items-start gap-0.5 text-right" dir="rtl" aria-hidden="true">
+    <span className="text-sm font-bold text-slate-900 dark:text-white">سامانه مدیریت پیامکی</span>
+    <span className="text-[11px] font-medium text-muted-foreground">اداره برق و مخابرات - شرکت آب و فاضلاب خراسان رضوی</span>
+  </div>
+);
+
 export default function Topbar({
   page,
   dark,
@@ -38,12 +45,15 @@ export default function Topbar({
   return (
     <header
       dir="rtl"
-      className="flex items-center justify-between gap-3 border-b border-slate-200/70 bg-background/80 px-5 py-3 backdrop-blur-xl dark:border-white/5"
+      className="flex items-center justify-between gap-4 border-b border-slate-200/70 bg-background/80 px-5 py-3 backdrop-blur-xl dark:border-white/5"
     >
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1 text-right">
         <h2 className="text-base font-extrabold text-slate-900 dark:text-white">{t.title}</h2>
         <p className="hidden truncate text-xs text-muted-foreground sm:block">{t.subtitle}</p>
       </div>
+
+      {/* برند هدر - در سمت چپ بعد از عنوان با فاصله */}
+      <div className="flex-shrink-0 px-5">{BRAND_HEADER}</div>
 
       <div className="flex shrink-0 items-center gap-2">
         <span

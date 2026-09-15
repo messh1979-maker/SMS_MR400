@@ -3,7 +3,6 @@ import Sidebar from "@/components/Sidebar";
 import Topbar from "@/components/Topbar";
 import ToastHost from "@/components/ToastHost";
 import CommandPalette from "@/components/CommandPalette";
-import ModemStatusBar, { type ModemStatus } from "@/components/ModemStatusBar";
 import Dashboard from "@/pages/Dashboard";
 import SendPage from "@/pages/SendPage";
 import InboxPage from "@/pages/InboxPage";
@@ -14,6 +13,14 @@ import SettingsPage from "@/pages/SettingsPage";
 import { showToast } from "@/lib/toast";
 import { apiRequest } from "@/lib/api";
 import type { Contact, ContactDetail, PageId, SendPrefill } from "@/lib/types";
+
+type ModemStatus = {
+  connected: boolean | null;
+  network_type?: string;
+  signal_level?: number | null;
+  sim_status?: string;
+  unread_sms?: number | null;
+};
 
 export default function App() {
   const [dark, setDark] = useState<boolean>(() => {
@@ -28,7 +35,6 @@ export default function App() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [prefill, setPrefill] = useState<SendPrefill | null>(null);
   const [modemStatus, setModemStatus] = useState<ModemStatus>({ connected: null });
-  const [statusChecking, setStatusChecking] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
 
   useEffect(() => {
@@ -37,14 +43,11 @@ export default function App() {
   }, [dark]);
 
   const refreshStatus = useCallback(async () => {
-    setStatusChecking(true);
     try {
       const s = await apiRequest<ModemStatus & { status?: string; router_host?: string }>("/api/status");
       setModemStatus({ ...s, connected: true });
     } catch {
-      setModemStatus((prev) => ({ ...prev, connected: false }));
-    } finally {
-      setStatusChecking(false);
+      setModemStatus((prev: ModemStatus) => ({ ...prev, connected: false }));
     }
   }, []);
 
@@ -100,9 +103,6 @@ export default function App() {
             connected={modemStatus.connected}
             signalLevel={modemStatus.signal_level}
           />
-          {page !== "dashboard" && (
-            <ModemStatusBar status={modemStatus} refreshing={statusChecking} onRefresh={() => refreshStatus()} />
-          )}
         </div>
         <main className="flex-1 p-4 sm:p-6">
           {page === "dashboard" && <Dashboard key={refreshNonce} refreshNonce={refreshNonce} onNavigate={navigate} />}
