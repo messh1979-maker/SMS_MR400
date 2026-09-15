@@ -4,13 +4,14 @@ import {
   ArrowLeft,
   ArrowUpRight,
   BatteryCharging,
-  Bell,
   CheckCheck,
   Inbox,
   Network,
   RefreshCw,
   Send,
   Users,
+  AlertTriangle,
+  Clock,
 } from "lucide-react";
 import BarChart from "@/components/BarChart";
 import BentoBox from "@/components/BentoBox";
@@ -19,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { apiRequest } from "@/lib/api";
 import { faDigits, formatTime } from "@/lib/format";
 import { getCategory } from "@/lib/sms";
-import type { ActivityPoint, PageId, SmsMessage, StatsData } from "@/lib/types";
+import type { ActivityPoint, PageId, SmsMessage, StatsData, SmsCounts } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type Status = {
@@ -34,6 +35,7 @@ type Status = {
 function useDashboard() {
   const [status, setStatus] = useState<Status>({ connected: null });
   const [stats, setStats] = useState<StatsData | null>(null);
+  const [counts, setCounts] = useState<SmsCounts>({ pending: 0, failed: 0 });
   const [activity, setActivity] = useState<ActivityPoint[]>([]);
   const [recent, setRecent] = useState<SmsMessage[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -41,14 +43,16 @@ function useDashboard() {
   async function load() {
     setRefreshing(true);
     try {
-      const [s, st, a, inb] = await Promise.all([
+      const [s, st, a, inb, c] = await Promise.all([
         apiRequest<Status>("/api/status"),
         apiRequest<StatsData>("/api/stats"),
         apiRequest<{ series: ActivityPoint[] }>("/api/activity?days=7"),
         apiRequest<{ messages: SmsMessage[] }>("/api/inbox"),
+        apiRequest<SmsCounts>("/api/sms_counts"),
       ]);
       setStatus({ ...s, connected: true });
       setStats(st);
+      setCounts(c);
       setActivity(Array.isArray(a.series) ? a.series : []);
       const msgs = Array.isArray(inb.messages) ? inb.messages.slice(0, 6) : [];
       setRecent(msgs);
@@ -63,7 +67,7 @@ function useDashboard() {
     load();
   }, []);
 
-  return { status, stats, activity, recent, refreshing, reload: load };
+  return { status, stats, counts, activity, recent, refreshing, reload: load };
 }
 
 function StatTile({
@@ -171,20 +175,20 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: PageId) => v
           color="bg-emerald-100 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300"
         />
         <StatTile
-          icon={Bell}
-          label="خوانده‌نشده"
-          value={faDigits(d.status.unread_sms ?? 0)}
-          sub="آخرین پیام دریافتی"
-          loading={d.status.connected === null}
+          icon={Clock}
+          label="ارسال نشده"
+          value={faDigits(d.counts.pending)}
+          sub="زمان‌بندی‌های در انتظار"
+          loading={!d.stats}
           color="bg-amber-100 text-amber-600 dark:bg-amber-950/50 dark:text-amber-300"
         />
         <StatTile
-          icon={Activity}
-          label="کل مراودات"
-          value={faDigits(receivedTotal + sentTotal)}
-          sub="وارده + ارسال‌شده"
+          icon={AlertTriangle}
+          label="ارسال ناموفق"
+          value={faDigits(d.counts.failed)}
+          sub="زمان‌بندی‌های شکست خورده"
           loading={!d.stats}
-          color="bg-indigo-100 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-300"
+          color="bg-red-100 text-red-600 dark:bg-red-950/50 dark:text-red-300"
         />
       </div>
 

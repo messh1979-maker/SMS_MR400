@@ -53,9 +53,13 @@ export type ScheduledSms = {
   message: string;
   scheduled_at_utc: string;
   status: "pending" | "sent" | "failed" | "cancelled";
+  retries: number;
+  max_retries: number;
   created_at: string;
   sent_at?: string | null;
 };
+
+export type SmsCounts = { pending: number; failed: number };
 
 export type SendPrefill = {
   mobile: string;

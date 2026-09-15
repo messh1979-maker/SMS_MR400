@@ -86,7 +86,7 @@ export default function App() {
         <Topbar page={page} dark={dark} onToggleTheme={() => setDark((v) => !v)} onOpenCommand={openPalette} onRefresh={refresh} refreshing={false} connected={connected} />
         <main className="flex-1 p-4 sm:p-6">
           {page === "dashboard" && <Dashboard key={refreshNonce} onNavigate={navigate} />}
-          {page === "send" && <SendPage key={refreshNonce} prefill={prefill} onConsumePrefill={consumePrefill} />}
+          {page === "send" && <SendPage key={refreshNonce} prefill={prefill} onConsumePrefill={consumePrefill} onNavigate={navigate} />}
           {page === "inbox" && <InboxPage key={refreshNonce} />}
           {page === "history" && <HistoryPage key={refreshNonce} />}
           {page === "contacts" && <ContactsPage key={refreshNonce} onSendTo={handleSendTo} />}

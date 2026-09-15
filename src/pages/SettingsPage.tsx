@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
-import { BookOpen, Cable, Globe, RefreshCw, Settings2, ShieldCheck } from "lucide-react";
+import { BookOpen, Cable, Globe, RefreshCw, Settings2, ShieldCheck, Plus, Trash2, FileText } from "lucide-react";
 import BentoBox from "@/components/BentoBox";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { apiRequest, BASE } from "@/lib/api";
 import { faDigits } from "@/lib/format";
 import { showToast } from "@/lib/toast";
@@ -24,6 +26,11 @@ export default function SettingsPage() {
   const [checking, setChecking] = useState(false);
   const [lastCheck, setLastCheck] = useState<string | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
+  const [templates, setTemplates] = useState<{ id: number; title: string; body: string; created_at: string }[]>([]);
+  const [tplLoading, setTplLoading] = useState(true);
+  const [tplTitle, setTplTitle] = useState("");
+  const [tplBody, setTplBody] = useState("");
+  const [tplSaving, setTplSaving] = useState(false);
 
   async function testConnection() {
     setChecking(true);
@@ -45,6 +52,46 @@ export default function SettingsPage() {
     testConnection();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    async function loadTemplates() {
+      try {
+        const data = await apiRequest<{ templates: { id: number; title: string; body: string; created_at: string }[] }>("/api/templates");
+        setTemplates(Array.isArray(data.templates) ? data.templates : []);
+      } catch { /* silent */ }
+      finally { setTplLoading(false); }
+    }
+    loadTemplates();
+  }, []);
+
+  async function handleCreateTemplate() {
+    if (!tplTitle.trim() || !tplBody.trim()) {
+      showToast("عنوان و متن قالب الزامی است.", true);
+      return;
+    }
+    setTplSaving(true);
+    try {
+      await apiRequest("/api/templates", { method: "POST", body: JSON.stringify({ title: tplTitle.trim(), body: tplBody.trim() }) });
+      showToast("قالب جدید ساخته شد.");
+      setTplTitle("");
+      setTplBody("");
+      setTemplates((prev) => [...prev, { id: Date.now(), title: tplTitle.trim(), body: tplBody.trim(), created_at: "" }]);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "خطا در ساخت قالب", true);
+    } finally {
+      setTplSaving(false);
+    }
+  }
+
+  async function handleDeleteTemplate(id: number) {
+    try {
+      await apiRequest(`/api/templates/${id}`, { method: "DELETE" });
+      showToast("قالب حذف شد.");
+      setTemplates((prev) => prev.filter((t) => t.id !== id));
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "خطا در حذف قالب", true);
+    }
+  }
 
   return (
     <div dir="rtl" className="fade-in-up grid gap-4 lg:grid-cols-2">
@@ -114,6 +161,57 @@ export default function SettingsPage() {
               </code>
             </div>
           ))}
+        </div>
+      </BentoBox>
+
+      <BentoBox title="مدیریت قالب‌های آماده" icon={FileText} className="lg:col-span-2">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <div>
+              <Label className="block text-sm font-medium mb-1">عنوان قالب</Label>
+              <Input
+                value={tplTitle}
+                onChange={(e) => setTplTitle(e.target.value)}
+                placeholder="مثال: تبریک سال نو"
+                className="text-sm"
+              />
+            </div>
+            <div>
+              <Label className="block text-sm font-medium mb-1">متن قالب</Label>
+              <textarea
+                value={tplBody}
+                onChange={(e) => setTplBody(e.target.value)}
+                rows={3}
+                className="w-full p-2 rounded-md border border-gray-300 text-sm text-slate-900 dark:text-slate-100"
+                placeholder="متن پیام... از {نام} و {نام خانوادگی} استفاده کنید"
+              />
+            </div>
+            <Button onClick={handleCreateTemplate} disabled={tplSaving} size="sm" className="gap-1.5">
+              <Plus className="h-3.5 w-3.5" />
+              {tplSaving ? "در حال ذخیره..." : "افزودن قالب"}
+            </Button>
+          </div>
+          <div>
+            {tplLoading ? (
+              <div className="flex gap-2">{[...Array(3)].map((_, i) => <div key={i} className="h-10 rounded bg-slate-100 animate-pulse" />)}</div>
+            ) : templates.length === 0 ? (
+              <p className="text-sm text-muted-foreground">هیچ قالبی وجود ندارد.</p>
+            ) : (
+              <ul className="divide-y divide-slate-100 dark:divide-white/5">
+                {templates.map((t) => (
+                  <li key={t.id} className="flex items-center justify-between py-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">{t.title}</p>
+                      <p className="text-xs text-muted-foreground truncate">{t.body}</p>
+                    </div>
+                    <Button variant="ghost" size="sm" onClick={() => handleDeleteTemplate(t.id)} className="text-red-600 hover:text-red-700 gap-1">
+                      <Trash2 className="h-3.5 w-3.5" /> حذف
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
       </BentoBox>
 

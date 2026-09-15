@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Send, CheckCheck, Clock, Calendar, FileText, Loader2 } from "lucide-react";
+import { Send, CheckCheck, Clock, Calendar, FileText, Loader2, Users } from "lucide-react";
 import BentoBox from "@/components/BentoBox";
 import Skeleton from "@/components/Skeleton";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,7 @@ import { normalizeNumber } from "@/lib/sms";
 import { showToast } from "@/lib/toast";
 import { apiRequest } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { SendPrefill } from "@/lib/types";
+import type { SendPrefill, Template } from "@/lib/types";
 import DatePicker from "react-multi-date-picker";
 import persianFa from "react-date-object/locales/persian_fa";
 
@@ -22,12 +22,11 @@ const VARIABLES = [
   { label: "سلام", tag: "{سلام}" },
 ];
 
-interface Template { id: number; title: string; body: string; created_at: string; }
-
 export default function SendPage({
   prefill,
   onConsumePrefill,
-}: { prefill: SendPrefill | null; onConsumePrefill: () => void }) {
+  onNavigate,
+}: { prefill: SendPrefill | null; onConsumePrefill: () => void; onNavigate: (p: "contacts") => void }) {
   const [phone, setPhone] = useState(prefill?.mobile || "");
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
@@ -35,6 +34,7 @@ export default function SendPage({
   const [scheduled, setScheduled] = useState(false);
   const [scheduleDate, setScheduleDate] = useState<string | null>(null);
   const [scheduleTime, setScheduleTime] = useState("");
+  const [maxRetries, setMaxRetries] = useState(3);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(true);
 
@@ -95,13 +95,12 @@ export default function SendPage({
         showToast("تاریخ و زمان ارسال را انتخاب کنید.", true);
         return;
       }
-      // scheduleDate is in jalali format "YYYY/MM/DD" from DatePicker
       const jalaliStr = `${scheduleDate} ${scheduleTime}`;
       setSending(true);
       try {
         await apiRequest("/api/send_scheduled", {
           method: "POST",
-          body: JSON.stringify({ mobile: cleaned, message: resolvedMessage, scheduled_at: jalaliStr }),
+          body: JSON.stringify({ mobile: cleaned, message: resolvedMessage, scheduled_at: jalaliStr, max_retries: maxRetries }),
         });
         setSent(true);
         setMessage("");
@@ -168,13 +167,26 @@ export default function SendPage({
         <div className="space-y-4">
           <div>
             <Label className="block text-sm font-medium mb-1">شماره موبایل *</Label>
-            <Input
-              type="text"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="مثال: 09123456789"
-              className={cn("border", validPhone || !phone ? "border-gray-300" : "border-red-500")}
-            />
+            <div className="flex gap-2">
+              <Input
+                type="text"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="مثال: 09123456789"
+                className={cn("border", validPhone || !phone ? "border-gray-300" : "border-red-500")}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => onNavigate("contacts")}
+                className="gap-1.5 whitespace-nowrap"
+                title="انتخاب شماره از دفترچه تلفن"
+              >
+                <Users className="h-4 w-4" />
+                مخاطب
+              </Button>
+            </div>
             {!validPhone && phone && <p className="text-xs text-red-500 mt-1">شماره موبایل معتبر نیست</p>}
           </div>
 
@@ -184,7 +196,8 @@ export default function SendPage({
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               rows={5}
-              className="w-full p-2 rounded-md border border-gray-300"
+              dir="rtl"
+              className="w-full p-2 rounded-md border border-gray-300 text-slate-900 dark:text-slate-100 placeholder:text-muted-foreground"
               placeholder="متن پیام خود را اینجا بنویسید..."
             />
             <div className="flex justify-between text-xs text-muted-foreground mt-1">
@@ -252,8 +265,22 @@ export default function SendPage({
                   className="font-mono"
                 />
               </div>
+              <div>
+                <Label className="block text-sm font-medium mb-1">
+                  تعداد تلاش مجدد *
+                </Label>
+                <select
+                  value={maxRetries}
+                  onChange={(e) => setMaxRetries(Number(e.target.value))}
+                  className="w-full p-2 rounded-md border border-gray-300 bg-white dark:bg-slate-800 dark:text-slate-100 font-mono text-sm"
+                >
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+                    <option key={n} value={n}>{n} {n === 1 ? "بار" : "بار"}</option>
+                  ))}
+                </select>
+              </div>
               <p className="text-xs text-muted-foreground sm:col-span-2">
-                زمان مطابق ساعت تهران (UTC+3:30) ثبت می‌شود.
+                زمان مطابق ساعت تهران (UTC+3:30) ثبت می‌شود. در صورت ناموفق بودن ارسال، برنامه تا {maxRetries} بار دوباره تلاش خواهد کرد.
               </p>
             </div>
           )}

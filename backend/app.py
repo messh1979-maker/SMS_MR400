@@ -86,10 +86,13 @@ def init_db():
         message           TEXT    NOT NULL,
         scheduled_at_utc  TEXT    NOT NULL,
         status            TEXT    NOT NULL DEFAULT 'pending',
+        retries           INTEGER NOT NULL DEFAULT 0,
+        max_retries       INTEGER NOT NULL DEFAULT 3,
         created_at        TEXT    NOT NULL DEFAULT (datetime('now')),
         sent_at           TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_scheduled_status ON scheduled_sms(status);
+    CREATE INDEX IF NOT EXISTS idx_scheduled_retries ON scheduled_sms(retries);
     """)
     conn.close()
 
@@ -126,8 +129,8 @@ _lock = Lock()
 scheduler = BackgroundScheduler(timezone="UTC")
 scheduler.start()
 
-def send_scheduled_job(job_id: int, mobile: str, message: str):
-    """Background job to send a scheduled SMS."""
+def send_scheduled_job(job_id: int, mobile: str, message: str, max_retries: int = 3):
+    """Background job to send a scheduled SMS with retry logic."""
     try:
         from tplinkrouterc6u import TplinkRouterProvider
         router = TplinkRouterProvider.get_client(ROUTER_HOST, ROUTER_PASSWORD, ROUTER_USER)
@@ -145,14 +148,31 @@ def send_scheduled_job(job_id: int, mobile: str, message: str):
     except Exception as e:
         logger.exception("خطا در ارسال زمان‌بندی %d: %s", job_id, e)
         conn = get_db()
-        conn.execute("UPDATE scheduled_sms SET status='failed' WHERE id=?", (job_id,))
-        conn.commit()
-        conn.close()
+        row = conn.execute("SELECT retries, max_retries FROM scheduled_sms WHERE id=?", (job_id,)).fetchone()
+        if row and row["retries"] < row["max_retries"]:
+            new_retries = row["retries"] + 1
+            run_date = datetime.now(timezone.utc) + timedelta(seconds=30 * new_retries)
+            conn.execute("UPDATE scheduled_sms SET retries=?, status='pending', scheduled_at_utc=? WHERE id=?", (new_retries, run_date.isoformat(), job_id))
+            conn.commit()
+            conn.close()
+            scheduler.add_job(
+                send_scheduled_job,
+                DateTrigger(run_date=run_date),
+                args=[job_id, mobile, message, max_retries],
+                id=f"scheduled_{job_id}",
+                replace_existing=True
+            )
+            logger.info("زمان‌بندی %d دوباره برنامه‌ریزی شد (تلاش %d/%d)", job_id, new_retries, max_retries)
+        else:
+            conn.execute("UPDATE scheduled_sms SET status='failed' WHERE id=?", (job_id,))
+            conn.commit()
+            conn.close()
+            logger.error("زمان‌بندی %d بعد از %d تلاش ناموفق بود", job_id, row["retries"] if row else 0)
 
 def load_pending_scheduled():
     """Load pending scheduled SMS jobs on startup."""
     conn = get_db()
-    rows = conn.execute("SELECT id, mobile, message, scheduled_at_utc FROM scheduled_sms WHERE status='pending'").fetchall()
+    rows = conn.execute("SELECT id, mobile, message, scheduled_at_utc, max_retries FROM scheduled_sms WHERE status='pending'").fetchall()
     conn.close()
     for row in rows:
         try:
@@ -161,7 +181,7 @@ def load_pending_scheduled():
                 scheduler.add_job(
                     send_scheduled_job,
                     DateTrigger(run_date=run_date),
-                    args=[row["id"], row["mobile"], row["message"]],
+                    args=[row["id"], row["mobile"], row["message"], row["max_retries"]],
                     id=f"scheduled_{row['id']}",
                     replace_existing=True
                 )
@@ -506,7 +526,8 @@ def api_send_scheduled():
     data = request.get_json(silent=True) or {}
     mobile = str(data.get("mobile", "")).strip()
     message = str(data.get("message", "")).strip()
-    scheduled_at = str(data.get("scheduled_at", "")).strip()  # Persian: '1403/07/15 14:30'
+    scheduled_at = str(data.get("scheduled_at", "")).strip()
+    max_retries = int(data.get("max_retries", 3))
 
     if not mobile or not message or not scheduled_at:
         return jsonify({"error": "شماره، متن و زمان ارسال الزامی است"}), 400
@@ -514,6 +535,8 @@ def api_send_scheduled():
         return jsonify({"error": "شماره موبایل معتبر نیست"}), 400
     if len(message) > 5 * 160:
         return jsonify({"error": "متن پیام بیش از حد طولانی است"}), 400
+    if max_retries < 1 or max_retries > 10:
+        return jsonify({"error": "تعداد تلاش باید بین ۱ و ۱۰ باشد"}), 400
 
     try:
         scheduled_at_utc = jalali_to_utc(scheduled_at)
@@ -526,9 +549,9 @@ def api_send_scheduled():
 
     conn = get_db()
     cur = conn.execute("""
-        INSERT INTO scheduled_sms (mobile, message, scheduled_at_utc, status)
-        VALUES (?, ?, ?, 'pending')
-    """, (mobile, message, scheduled_at_utc))
+        INSERT INTO scheduled_sms (mobile, message, scheduled_at_utc, status, max_retries, retries)
+        VALUES (?, ?, ?, 'pending', ?, 0)
+    """, (mobile, message, scheduled_at_utc, max_retries))
     conn.commit()
     job_id = cur.lastrowid
     conn.close()
@@ -536,7 +559,7 @@ def api_send_scheduled():
     scheduler.add_job(
         send_scheduled_job,
         DateTrigger(run_date=run_date),
-        args=[job_id, mobile, message],
+        args=[job_id, mobile, message, max_retries],
         id=f"scheduled_{job_id}",
         replace_existing=True
     )
@@ -574,6 +597,17 @@ def api_scheduled_delete(job_id: int):
     conn.close()
     logger.info("زمان‌بندی %d لغو شد", job_id)
     return jsonify({"success": True, "deleted": True})
+
+# ---------------------------- SMS COUNTS ----------------------------
+@app.route("/api/sms_counts", methods=["GET"])
+@require_api_key
+def api_sms_counts():
+    """Return counts of pending and failed scheduled SMS."""
+    conn = get_db()
+    pending = conn.execute("SELECT COUNT(*) FROM scheduled_sms WHERE status='pending'").fetchone()[0]
+    failed = conn.execute("SELECT COUNT(*) FROM scheduled_sms WHERE status='failed'").fetchone()[0]
+    conn.close()
+    return jsonify({"pending": pending, "failed": failed})
 
 # ---------------------------- HISTORY (no modem needed) ----------------------------
 @app.route("/api/history", methods=["GET"])
