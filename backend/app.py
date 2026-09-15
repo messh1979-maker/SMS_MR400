@@ -8,6 +8,8 @@ import os
 import re
 import sqlite3
 import tempfile
+import threading
+import time
 from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -26,6 +28,7 @@ import io
 
 import jdatetime
 
+from cache_store import CacheStore, SingleFlight, purge_old_caches
 from categorize import classify_message
 from import_export import (
     MAX_IMPORT_BYTES,
@@ -111,6 +114,13 @@ def init_db():
     if "notes" not in cols:
         conn.execute("ALTER TABLE contacts ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
         conn.commit()
+    # مهاجرت idempotent برای قالب‌ها: updated_at + variables[]
+    tpl_cols = [r[1] for r in conn.execute("PRAGMA table_info(templates)").fetchall()]
+    if "updated_at" not in tpl_cols:
+        conn.execute("ALTER TABLE templates ADD COLUMN updated_at TEXT")
+    if "variables" not in tpl_cols:
+        conn.execute("ALTER TABLE templates ADD COLUMN variables TEXT NOT NULL DEFAULT '[]'")
+    conn.commit()
     conn.close()
 
 init_db()
@@ -159,6 +169,60 @@ def _append_sent_log(phone: str, message: str) -> None:
                         "sent_at": datetime.now().isoformat(timespec="seconds"),
                         "status": "active", "updated_at": None})
         _write_sent_log(entries)
+
+# -------------------------------------------------------- Cache-First (SWR) --
+purge_old_caches()
+
+_inbox_cache = CacheStore("inbox", ttl_seconds=15)
+_stats_cache = CacheStore("stats", ttl_seconds=15)
+_activity_cache = CacheStore("activity", ttl_seconds=30)
+_sf = SingleFlight()
+
+def _run_modem(fetch):
+    """اجرای fetch(router) در نشست مستقل مودم، زیر قفل سراسری (مانند with_modem)."""
+    from tplinkrouterc6u import TplinkRouterProvider
+    with _lock:
+        router = TplinkRouterProvider.get_client(ROUTER_HOST, ROUTER_PASSWORD, ROUTER_USER)
+        try:
+            router.authorize()
+            return fetch(router)
+        finally:
+            try:
+                router.logout()
+            except Exception:
+                logger.warning("خروج (logout) از نشست مودم در بازآوری پس‌زمینه ناموفق بود.")
+
+def _background_refresh(name: str, cache: CacheStore, fetch) -> None:
+    """بازآوری در پس‌زمینه با single-flight تا مودم بمباران نشود."""
+    if not _sf.try_acquire(name):
+        return
+    def job():
+        try:
+            payload = _run_modem(fetch)
+            doc = cache.put(payload)
+            logger.info("بازآوری cache/%s انجام شد (نسخه %d)", name, doc.get("version", 0))
+        except Exception as exc:
+            logger.warning("بازآوری پس‌زمینه %s ناموفق: %s", name, exc)
+        finally:
+            _sf.release(name)
+    threading.Thread(target=job, daemon=True, name="swr-%s" % name).start()
+
+def _serve_swr(name: str, cache: CacheStore, fetch, force: bool = False):
+    """Cache-First + Stale-While-Revalidate: پاسخ آنی از کش + بازآوری پس‌زمینه."""
+    doc = cache.get()
+    if doc is not None:
+        stale = not cache.fresh(doc)
+        if force or stale:
+            _background_refresh(name, cache, fetch)
+        return jsonify({**doc, "cached": True, "stale": stale})
+    # Cold start (کش وجود ندارد): اولین بار به‌صورت هم‌زمان می‌گیریم
+    try:
+        payload = _run_modem(fetch)
+    except Exception as exc:
+        logger.exception("خطای مودم در cold-start %s: %s", name, exc)
+        return jsonify({"error": "اتصال یا ورود به مودم ناموفق بود"}), 502
+    doc = cache.put(payload)
+    return jsonify({**doc, "cached": False, "stale": False})
 
 # --------------------------------------------------------------- اپلیکیشن --
 app = Flask(__name__)
@@ -337,20 +401,26 @@ def api_send_sms(router):
 
     router.send_sms(phone, message)
     _append_sent_log(phone, message)
+    # کش آماری پس از هر ارسال باید در خواندن بعدی تازه شود (نسخهٔ مانوتونیک حفظ می‌کند)
+    _stats_cache.invalidate()
+    _activity_cache.invalidate()
     logger.info("پیامک برای %s ارسال شد", phone)
     return jsonify({"success": True})
 
-@app.route("/api/inbox", methods=["GET"])
-@require_api_key
-@with_modem
-def api_inbox(router):
+def _fetch_inbox(router):
     messages = router.get_sms()
     out = []
     for m in messages:
         d = _sms_to_dict(m)
         d["category"] = classify_message(d.get("content") or "")
         out.append(d)
-    return jsonify({"messages": out})
+    return {"messages": out}
+
+@app.route("/api/inbox", methods=["GET"])
+@require_api_key
+def api_inbox():
+    force = request.args.get("refresh") in ("1", "true", "background")
+    return _serve_swr("inbox", _inbox_cache, _fetch_inbox, force=force)
 
 @app.route("/api/sms", methods=["DELETE"])
 @require_api_key
@@ -368,13 +438,14 @@ def api_delete_sms(router):
         if sms.id in ids_set:
             router.delete_sms(sms)
             deleted += 1
+    if deleted:
+        _inbox_cache.invalidate()
+        _stats_cache.invalidate()
+        _activity_cache.invalidate()
     logger.info("%d پیامک حذف شد", deleted)
     return jsonify({"success": True, "deleted": deleted})
 
-@app.route("/api/stats", methods=["GET"])
-@require_api_key
-@with_modem
-def api_stats(router):
+def _fetch_stats(router):
     messages = router.get_sms()
     received_map = {}
     for sms in messages:
@@ -399,38 +470,55 @@ def api_stats(router):
     def top(mapping: dict) -> list:
         return sorted(({"number": number, "count": stat["count"], "last_at": stat["last_at"]} for number, stat in mapping.items()), key=lambda item: item["count"], reverse=True)[:10]
 
-    return jsonify({
+    return {
         "received": {"total": len(messages), "by_number": top(received_map)},
         "sent": {"total": sum(v["count"] for v in sent_map.values()), "by_number": top(sent_map)},
         "updated_at": datetime.now().isoformat(timespec="seconds"),
-    })
+    }
+
+@app.route("/api/stats", methods=["GET"])
+@require_api_key
+def api_stats():
+    force = request.args.get("refresh") in ("1", "true", "background")
+    return _serve_swr("stats", _stats_cache, _fetch_stats, force=force)
+
+def _fetch_activity_days(days: int):
+    def fetch(router):
+        today = datetime.now().date()
+        sent_by = {}
+        for entry in _load_sent_log():
+            if entry.get("status", "active") != "active":
+                continue
+            try:
+                d = datetime.fromisoformat(entry["sent_at"]).date()
+                sent_by[d] = sent_by.get(d, 0) + 1
+            except (ValueError, KeyError, TypeError):
+                continue
+        recv_by = {}
+        for m in router.get_sms():
+            if m.received_at is None:
+                continue
+            d = m.received_at.date()
+            recv_by[d] = recv_by.get(d, 0) + 1
+        series = [{"date": (today - timedelta(days=i)).isoformat(),
+                   "received": recv_by.get(today - timedelta(days=i), 0),
+                   "sent": sent_by.get(today - timedelta(days=i), 0)}
+                  for i in range(days - 1, -1, -1)]
+        return {"days": days, "series": series}
+    return fetch
 
 @app.route("/api/activity", methods=["GET"])
 @require_api_key
-@with_modem
-def api_activity(router):
+def api_activity():
     try:
         days = max(1, min(int(request.args.get("days", "7")), 30))
     except (TypeError, ValueError):
         days = 7
-    today = datetime.now().date()
-    sent_by = {}
-    for entry in _load_sent_log():
-        if entry.get("status", "active") != "active":
-            continue
-        try:
-            d = datetime.fromisoformat(entry["sent_at"]).date()
-            sent_by[d] = sent_by.get(d, 0) + 1
-        except (ValueError, KeyError, TypeError):
-            continue
-    recv_by = {}
-    for m in router.get_sms():
-        if m.received_at is None: continue
-        d = m.received_at.date()
-        recv_by[d] = recv_by.get(d, 0) + 1
-
-    series = [{"date": (today - timedelta(days=i)).isoformat(), "received": recv_by.get(today - timedelta(days=i), 0), "sent": sent_by.get(today - timedelta(days=i), 0)} for i in range(days - 1, -1, -1)]
-    return jsonify({"days": days, "series": series})
+    force = request.args.get("refresh") in ("1", "true", "background")
+    if days == 7:
+        return _serve_swr("activity", _activity_cache, _fetch_activity_days(days), force=force)
+    # بازه‌های سفارشی برای دقت، کش نمی‌شوند
+    return jsonify(_run_modem(_fetch_activity_days(days)))
 
 # ---------------------------- CONTACTS CRUD ----------------------------
 @app.route("/api/contacts", methods=["GET"])
@@ -608,6 +696,39 @@ def api_contacts_export():
     return resp
 
 # ---------------------------- TEMPLATES CRUD ----------------------------
+TEMPLATE_TITLE_MAX = 100
+TEMPLATE_BODY_MAX = 5 * 160
+PLACEHOLDER_RE = re.compile(r"^\{[\wآ-ی]{1,30}\}$", re.UNICODE)
+
+def _template_variables(body: str) -> list:
+    """استخراج متغیرهای قالب از متن (مثل {نام}) به‌ترتیب اولین ظهور."""
+    seen: list = []
+    for m in re.findall(r"\{([\wآ-ی]{1,30})\}", body):
+        if m not in seen:
+            seen.append(m)
+    return seen
+
+def _validate_template(title: str, body: str) -> str | None:
+    """خطای اعتبارسنجی را برمی‌گرداند یا None اگر معتبر باشد."""
+    if not title or not body:
+        return "عنوان و متن قالب الزامی است"
+    if len(title) > TEMPLATE_TITLE_MAX:
+        return "عنوان قالب بیش از ۱۰۰ کاراکتر است"
+    if len(body) > TEMPLATE_BODY_MAX:
+        return "متن قالب بیش از ۵ پیامک (۸۰۰ کاراکتر) است"
+    for ph in re.findall(r"\{[^}]*\}", body):
+        if not PLACEHOLDER_RE.match(ph):
+            return f"متغیر «{ph}» نامعتبر است؛ نمونه صحیح: {{نام}}"
+    return None
+
+def _template_row_to_dict(row) -> dict:
+    d = dict(row)
+    try:
+        d["variables"] = json.loads(d.get("variables") or "[]")
+    except (ValueError, TypeError):
+        d["variables"] = []
+    return d
+
 @app.route("/api/templates", methods=["GET"])
 @require_api_key
 def api_templates_list():
@@ -615,26 +736,54 @@ def api_templates_list():
     conn = get_db()
     rows = conn.execute("SELECT * FROM templates ORDER BY title").fetchall()
     conn.close()
-    return jsonify({"templates": [dict(row) for row in rows]})
+    return jsonify({"templates": [_template_row_to_dict(r) for r in rows]})
 
 @app.route("/api/templates", methods=["POST"])
 @require_api_key
 def api_templates_create():
     """Create a new template."""
     data = request.get_json(silent=True) or {}
-    if not data.get("title") or not data.get("body"):
-        return jsonify({"error": "عنوان و متن قالب الزامی است"}), 400
+    title = str(data.get("title", "")).strip()
+    body = str(data.get("body", "")).strip()
+    err = _validate_template(title, body)
+    if err:
+        return jsonify({"error": err}), 400
+    variables = _template_variables(body)
 
     conn = get_db()
     cur = conn.execute(
-        "INSERT INTO templates (title, body) VALUES (?, ?)",
-        (data["title"].strip(), data["body"].strip())
+        "INSERT INTO templates (title, body, variables, updated_at) VALUES (?, ?, ?, datetime('now'))",
+        (title, body, json.dumps(variables, ensure_ascii=False))
     )
     conn.commit()
     template_id = cur.lastrowid
     conn.close()
     logger.info("قالب %d ایجاد شد", template_id)
     return jsonify({"success": True, "id": template_id}), 201
+
+@app.route("/api/templates/<int:template_id>", methods=["PUT"])
+@require_api_key
+def api_templates_update(template_id: int):
+    """Update an existing template (IDOR-safe: 404 برای قالب ناموجود)."""
+    data = request.get_json(silent=True) or {}
+    title = str(data.get("title", "")).strip()
+    body = str(data.get("body", "")).strip()
+    err = _validate_template(title, body)
+    if err:
+        return jsonify({"error": err}), 400
+    variables = _template_variables(body)
+
+    conn = get_db()
+    cur = conn.execute(
+        "UPDATE templates SET title=?, body=?, variables=?, updated_at=datetime('now') WHERE id=?",
+        (title, body, json.dumps(variables, ensure_ascii=False), template_id)
+    )
+    conn.commit()
+    conn.close()
+    if cur.rowcount == 0:
+        return jsonify({"error": "قالب یافت نشد"}), 404
+    logger.info("قالب %d ویرایش شد", template_id)
+    return jsonify({"success": True, "id": template_id, "variables": variables})
 
 @app.route("/api/templates/<int:template_id>", methods=["DELETE"])
 @require_api_key

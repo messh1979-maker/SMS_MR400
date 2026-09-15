@@ -34,7 +34,7 @@ export default function Topbar({
   return (
     <header
       dir="rtl"
-      className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-slate-200/70 bg-background/80 px-5 py-3 backdrop-blur-xl dark:border-white/5"
+      className="flex items-center justify-between gap-3 border-b border-slate-200/70 bg-background/80 px-5 py-3 backdrop-blur-xl dark:border-white/5"
     >
       <div className="min-w-0">
         <h2 className="text-base font-extrabold text-slate-900 dark:text-white">{t.title}</h2>

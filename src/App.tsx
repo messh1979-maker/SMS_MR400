@@ -3,6 +3,7 @@ import Sidebar from "@/components/Sidebar";
 import Topbar from "@/components/Topbar";
 import ToastHost from "@/components/ToastHost";
 import CommandPalette from "@/components/CommandPalette";
+import ModemStatusBar, { type ModemStatus } from "@/components/ModemStatusBar";
 import Dashboard from "@/pages/Dashboard";
 import SendPage from "@/pages/SendPage";
 import InboxPage from "@/pages/InboxPage";
@@ -26,7 +27,8 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [prefill, setPrefill] = useState<SendPrefill | null>(null);
-  const [connected, setConnected] = useState<boolean | null>(null);
+  const [modemStatus, setModemStatus] = useState<ModemStatus>({ connected: null });
+  const [statusChecking, setStatusChecking] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
 
   useEffect(() => {
@@ -35,11 +37,14 @@ export default function App() {
   }, [dark]);
 
   const refreshStatus = useCallback(async () => {
+    setStatusChecking(true);
     try {
-      await apiRequest("/api/status");
-      setConnected(true);
+      const s = await apiRequest<ModemStatus & { status?: string; router_host?: string }>("/api/status");
+      setModemStatus({ ...s, connected: true });
     } catch {
-      setConnected(false);
+      setModemStatus((prev) => ({ ...prev, connected: false }));
+    } finally {
+      setStatusChecking(false);
     }
   }, []);
 
@@ -84,9 +89,12 @@ export default function App() {
     <div dir="rtl" className="flex min-h-screen bg-[radial-gradient(80%_60%_at_50%_-10%,rgba(59,130,246,0.10),transparent),radial-gradient(60%_50%_at_90%_110%,rgba(129,140,248,0.08),transparent)]">
       <Sidebar page={page} onNavigate={navigate} collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar page={page} dark={dark} onToggleTheme={() => setDark((v) => !v)} onOpenCommand={openPalette} onRefresh={refresh} refreshing={false} connected={connected} />
+        <div className="sticky top-0 z-30">
+          <Topbar page={page} dark={dark} onToggleTheme={() => setDark((v) => !v)} onOpenCommand={openPalette} onRefresh={refresh} refreshing={false} connected={modemStatus.connected} />
+          <ModemStatusBar status={modemStatus} refreshing={statusChecking} onRefresh={() => refreshStatus()} />
+        </div>
         <main className="flex-1 p-4 sm:p-6">
-          {page === "dashboard" && <Dashboard key={refreshNonce} onNavigate={navigate} />}
+          {page === "dashboard" && <Dashboard key={refreshNonce} refreshNonce={refreshNonce} onNavigate={navigate} />}
           {page === "send" && <SendPage key={refreshNonce} prefill={prefill} onConsumePrefill={consumePrefill} onNavigate={navigate} />}
           {page === "inbox" && <InboxPage key={refreshNonce} />}
           {page === "history" && <HistoryPage key={refreshNonce} />}

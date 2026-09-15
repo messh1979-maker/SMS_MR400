@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BookOpen, Cable, Globe, RefreshCw, Settings2, ShieldCheck, Plus, Trash2, FileText } from "lucide-react";
+import { BookOpen, Cable, Globe, RefreshCw, Settings2, ShieldCheck, Plus, Trash2, FileText, PenLine, X } from "lucide-react";
 import BentoBox from "@/components/BentoBox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,6 +8,7 @@ import { apiRequest, BASE } from "@/lib/api";
 import { faDigits } from "@/lib/format";
 import { showToast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
+import type { Template } from "@/lib/types";
 
 const ENDPOINTS = [
   { method: "GET", path: "/api/status", desc: "وضعیت اتصال، شبکه و سیم‌کارت" },
@@ -26,13 +27,17 @@ export default function SettingsPage() {
   const [checking, setChecking] = useState(false);
   const [lastCheck, setLastCheck] = useState<string | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
-  const [templates, setTemplates] = useState<{ id: number; title: string; body: string; created_at: string }[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]);
   const [tplLoading, setTplLoading] = useState(true);
   const [tplTitle, setTplTitle] = useState("");
   const [tplBody, setTplBody] = useState("");
   const [tplSaving, setTplSaving] = useState(false);
   const [tplSortKey, setTplSortKey] = useState<"title" | "created_at">("title");
   const [tplSortDir, setTplSortDir] = useState<"asc" | "desc">("asc");
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editBody, setEditBody] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
 
   async function testConnection() {
     setChecking(true);
@@ -58,13 +63,24 @@ export default function SettingsPage() {
   useEffect(() => {
     async function loadTemplates() {
       try {
-        const data = await apiRequest<{ templates: { id: number; title: string; body: string; created_at: string }[] }>("/api/templates");
+        const data = await apiRequest<{ templates: Template[] }>("/api/templates");
         setTemplates(Array.isArray(data.templates) ? data.templates : []);
       } catch { /* silent */ }
       finally { setTplLoading(false); }
     }
     loadTemplates();
   }, []);
+
+  /** استخراج متغیرهای قالب از متن — منطبق با Regex بک‌اند */
+  function extractVars(body: string): string[] {
+    const out: string[] = [];
+    for (const m of body.matchAll(/\{([\wآ-ی]{1,30})\}/g)) {
+      if (!out.includes(m[1])) out.push(m[1]);
+    }
+    return out;
+  }
+
+  const createVars = extractVars(tplBody);
 
   async function handleCreateTemplate() {
     if (!tplTitle.trim() || !tplBody.trim()) {
@@ -73,15 +89,53 @@ export default function SettingsPage() {
     }
     setTplSaving(true);
     try {
-      await apiRequest("/api/templates", { method: "POST", body: JSON.stringify({ title: tplTitle.trim(), body: tplBody.trim() }) });
+      const res = await apiRequest<{ id?: number }>("/api/templates", { method: "POST", body: JSON.stringify({ title: tplTitle.trim(), body: tplBody.trim() }) });
       showToast("قالب جدید ساخته شد.");
+      setTemplates((prev) => [
+        { id: res.id ?? Date.now(), title: tplTitle.trim(), body: tplBody.trim(), created_at: "", updated_at: "", variables: extractVars(tplBody) },
+        ...prev,
+      ]);
       setTplTitle("");
       setTplBody("");
-      setTemplates((prev) => [...prev, { id: Date.now(), title: tplTitle.trim(), body: tplBody.trim(), created_at: "" }]);
     } catch (err) {
       showToast(err instanceof Error ? err.message : "خطا در ساخت قالب", true);
     } finally {
       setTplSaving(false);
+    }
+  }
+
+  function startEdit(t: Template) {
+    setEditingId(t.id);
+    setEditTitle(t.title);
+    setEditBody(t.body);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditTitle("");
+    setEditBody("");
+  }
+
+  async function handleUpdateTemplate() {
+    if (editingId === null) return;
+    if (!editTitle.trim() || !editBody.trim()) {
+      showToast("عنوان و متن قالب الزامی است.", true);
+      return;
+    }
+    setEditSaving(true);
+    try {
+      await apiRequest(`/api/templates/${editingId}`, { method: "PUT", body: JSON.stringify({ title: editTitle.trim(), body: editBody.trim() }) });
+      setTemplates((prev) => prev.map((t) =>
+        t.id === editingId
+          ? { ...t, title: editTitle.trim(), body: editBody.trim(), updated_at: new Date().toISOString(), variables: extractVars(editBody) }
+          : t
+      ));
+      showToast("قالب ویرایش شد.");
+      cancelEdit();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "خطا در ویرایش قالب", true);
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -195,9 +249,19 @@ export default function SettingsPage() {
                 value={tplBody}
                 onChange={(e) => setTplBody(e.target.value)}
                 rows={3}
-                className="w-full p-2 rounded-md border border-gray-300 text-sm text-slate-900 dark:text-slate-100"
+                className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm text-slate-900 placeholder:text-muted-foreground dark:text-slate-100 dark:border-white/10"
                 placeholder="متن پیام... از {نام} و {نام خانوادگی} استفاده کنید"
               />
+              {createVars.length > 0 && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  <span className="text-[10px] text-muted-foreground">متغیرهای شناسایی‌شده:</span>
+                  {createVars.map((v) => (
+                    <span key={v} dir="ltr" className="rounded bg-blue-100 px-1.5 py-0.5 font-mono text-[10px] font-bold text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
+                      {'{'}{v}{'}'}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             <Button onClick={handleCreateTemplate} disabled={tplSaving} size="sm" className="gap-1.5">
               <Plus className="h-3.5 w-3.5" />
@@ -221,14 +285,62 @@ export default function SettingsPage() {
             ) : (
               <ul className="divide-y divide-slate-100 dark:divide-white/5">
                 {sortedTemplates.map((t) => (
-                  <li key={t.id} className="flex items-center justify-between py-2">
-                    <div className="min-w-0">
-                      <p className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">{t.title}</p>
-                      <p className="text-xs text-muted-foreground truncate">{t.body}</p>
+                  <li key={t.id} className="py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">{t.title}</p>
+                        <p className="text-xs text-muted-foreground truncate">{t.body}</p>
+                        {(t.variables ?? []).length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {(t.variables ?? []).map((v) => (
+                              <span key={v} dir="ltr" className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[9px] font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                {'{'}{v}{'}'}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => (editingId === t.id ? cancelEdit() : startEdit(t))} className="gap-1 text-slate-600 hover:text-slate-800 dark:text-slate-300">
+                          <PenLine className="h-3.5 w-3.5" />
+                          {editingId === t.id ? "انصراف" : "ویرایش"}
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => handleDeleteTemplate(t.id)} className="text-red-600 hover:text-red-700 gap-1">
+                          <Trash2 className="h-3.5 w-3.5" /> حذف
+                        </Button>
+                      </div>
                     </div>
-                    <Button variant="ghost" size="sm" onClick={() => handleDeleteTemplate(t.id)} className="text-red-600 hover:text-red-700 gap-1">
-                      <Trash2 className="h-3.5 w-3.5" /> حذف
-                    </Button>
+                    {editingId === t.id && (
+                      <div className="mt-2 space-y-2 rounded-md border border-slate-100 bg-slate-50/50 p-2.5 dark:border-white/5 dark:bg-slate-800/40">
+                        <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} className="text-sm" placeholder="عنوان قالب" />
+                        <textarea
+                          value={editBody}
+                          onChange={(e) => setEditBody(e.target.value)}
+                          rows={2}
+                          className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm text-slate-900 placeholder:text-muted-foreground dark:text-slate-100 dark:border-white/10"
+                          placeholder="متن قالب"
+                        />
+                        <div className="flex items-center justify-between">
+                          {extractVars(editBody).length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {extractVars(editBody).map((v) => (
+                                <span key={v} dir="ltr" className="rounded bg-blue-100 px-1.5 py-0.5 font-mono text-[10px] font-bold text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
+                                  {'{'}{v}{'}'}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            <Button size="sm" variant="outline" onClick={cancelEdit} className="gap-1 text-xs">
+                              <X className="h-3 w-3" /> لغو
+                            </Button>
+                            <Button size="sm" onClick={handleUpdateTemplate} disabled={editSaving} className="gap-1 text-xs">
+                              {editSaving ? "در حال ذخیره..." : "ذخیره"}
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>

@@ -54,6 +54,8 @@ export type Template = {
   title: string;
   body: string;
   created_at: string;
+  updated_at?: string | null;
+  variables?: string[];
 };
 
 export type ScheduledSms = {
@@ -69,6 +71,14 @@ export type ScheduledSms = {
 };
 
 export type SmsCounts = { pending: number; failed: number };
+
+/** فرادادهٔ پاسخ کش (Cache-First / SWR) که توسط بک‌اند الحاق می‌شود. */
+export type SwrMeta = {
+  version?: number;
+  cached?: boolean;
+  stale?: boolean;
+  cached_at?: number;
+};
 
 export type SendPrefill = {
   mobile: string;

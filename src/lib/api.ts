@@ -4,13 +4,24 @@ const TIMEOUT_MS = 25000;
 
 export async function apiRequest<T = unknown>(
   path: string,
-  options: { method?: string; body?: unknown } = {}
+  options: {
+    method?: string;
+    body?: unknown;
+    query?: Record<string, string | number | boolean | undefined>;
+  } = {}
 ): Promise<T> {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const query = options.query
+    ? Object.entries(options.query)
+        .filter(([, v]) => v !== undefined)
+        .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+        .join("&")
+    : "";
+  const url = query ? `${BASE}${path}?${query}` : `${BASE}${path}`;
   try {
     const hasBody = options.body !== undefined;
-    const res = await fetch(`${BASE}${path}`, {
+    const res = await fetch(url, {
       method: options.method ?? "GET",
       headers: {
         ...(hasBody ? { "Content-Type": "application/json" } : {}),

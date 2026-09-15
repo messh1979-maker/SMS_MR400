@@ -1,13 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
   ArrowLeft,
   ArrowUpRight,
-  BatteryCharging,
   CheckCheck,
   Inbox,
-  Network,
-  RefreshCw,
   Send,
   Users,
   AlertTriangle,
@@ -17,58 +14,50 @@ import BarChart from "@/components/BarChart";
 import BentoBox from "@/components/BentoBox";
 import RecordsModal from "@/components/RecordsModal";
 import Skeleton from "@/components/Skeleton";
-import { Button } from "@/components/ui/button";
 import { getCategoryMeta } from "@/lib/categories";
 import { apiRequest } from "@/lib/api";
+import { useCachedThenRefresh } from "@/lib/hooks";
 import { faDigits, formatTime } from "@/lib/format";
-import type { ActivityPoint, PageId, SmsMessage, ScheduledSms, SentEntry, StatsData, SmsCounts } from "@/lib/types";
+import type { ActivityPoint, PageId, SmsMessage, ScheduledSms, SentEntry, StatsData, SmsCounts, SwrMeta } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-type Status = {
-  connected: boolean | null;
-  router_host?: string;
-  network_type?: string;
-  signal_level?: number | null;
-  sim_status?: string;
-  unread_sms?: number;
-};
+function useDashboard(nonce: number) {
+  const stats = useCachedThenRefresh<StatsData & SwrMeta>(
+    useCallback((force) => apiRequest<StatsData & SwrMeta>(force ? "/api/stats?refresh=1" : "/api/stats"), [])
+  );
+  const inbox = useCachedThenRefresh<{ messages?: SmsMessage[] } & SwrMeta>(
+    useCallback((force) => apiRequest<{ messages?: SmsMessage[] } & SwrMeta>(force ? "/api/inbox?refresh=1" : "/api/inbox"), [])
+  );
+  const activity = useCachedThenRefresh<{ series?: ActivityPoint[] } & SwrMeta>(
+    useCallback((force) => apiRequest<{ series?: ActivityPoint[] } & SwrMeta>(force ? "/api/activity?days=7&refresh=1" : "/api/activity?days=7"), [])
+  );
 
-function useDashboard() {
-  const [status, setStatus] = useState<Status>({ connected: null });
-  const [stats, setStats] = useState<StatsData | null>(null);
   const [counts, setCounts] = useState<SmsCounts>({ pending: 0, failed: 0 });
-  const [activity, setActivity] = useState<ActivityPoint[]>([]);
-  const [recent, setRecent] = useState<SmsMessage[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
-
-  async function load() {
-    setRefreshing(true);
-    try {
-      const [s, st, a, inb, c] = await Promise.all([
-        apiRequest<Status>("/api/status"),
-        apiRequest<StatsData>("/api/stats"),
-        apiRequest<{ series: ActivityPoint[] }>("/api/activity?days=7"),
-        apiRequest<{ messages: SmsMessage[] }>("/api/inbox"),
-        apiRequest<SmsCounts>("/api/sms_counts"),
-      ]);
-      setStatus({ ...s, connected: true });
-      setStats(st);
-      setCounts(c);
-      setActivity(Array.isArray(a.series) ? a.series : []);
-      const msgs = Array.isArray(inb.messages) ? inb.messages.slice(0, 6) : [];
-      setRecent(msgs);
-    } catch {
-      setStatus((prev) => ({ ...prev, connected: false }));
-    } finally {
-      setRefreshing(false);
-    }
-  }
-
   useEffect(() => {
-    load();
+    apiRequest<SmsCounts>("/api/sms_counts")
+      .then(setCounts)
+      .catch(() => { /* silent */ });
   }, []);
 
-  return { status, stats, counts, activity, recent, refreshing, reload: load };
+  // تازه‌سازی اجباری هنگام کلیک «به‌روزرسانی» در Topbar (غیرچرخه‌ای؛ فقط با nonce)
+  const refreshRef = useRef<Array<() => void>>([]);
+  refreshRef.current = [stats.refresh, inbox.refresh, activity.refresh];
+  useEffect(() => {
+    if (nonce > 0) refreshRef.current.forEach((fn) => fn());
+  }, [nonce]);
+
+  const recent = (inbox.data?.messages ?? []).slice(0, 12);
+  return {
+    stats,
+    inbox,
+    activity,
+    counts,
+    recent,
+    receivedTotal: stats.data?.received.total ?? 0,
+    sentTotal: stats.data?.sent.total ?? 0,
+    sentToday: (activity.data?.series ?? []).filter((a) => a.sent > 0).reduce((s, a) => s + a.sent, 0),
+    updating: stats.stale || inbox.stale || activity.stale,
+  };
 }
 
 function StatTile({
@@ -122,8 +111,8 @@ function StatTile({
   );
 }
 
-export default function Dashboard({ onNavigate }: { onNavigate: (p: PageId) => void }) {
-  const d = useDashboard();
+export default function Dashboard({ onNavigate, refreshNonce }: { onNavigate: (p: PageId) => void; refreshNonce?: number }) {
+  const d = useDashboard(refreshNonce ?? 0);
   const [modal, setModal] = useState<{
     title: string;
     icon: typeof Send;
@@ -131,66 +120,28 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: PageId) => v
     render: (row: { id?: number | string }, index: number) => JSX.Element;
   } | null>(null);
 
-  const sentToday = d.activity.filter((a) => a.sent > 0).reduce((s, a) => s + a.sent, 0);
-  const receivedTotal = d.stats?.received.total ?? 0;
-  const sentTotal = d.stats?.sent.total ?? 0;
-
   return (
     <div dir="rtl" className="fade-in-up grid gap-4 lg:grid-cols-3">
-      {/* هدر برند */}
+      {/* هدر برند — وسط‌چین دقیق (Task 3) */}
       <div className="lg:col-span-3">
-        <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-          سامانه مدیریت پیامکی
-        </h1>
-        <p className="mt-1 text-sm font-medium text-muted-foreground">
-          اداره برق و مخابرات - شرکت آب و فاضلاب خراسان رضوی
-        </p>
+        <div className="flex w-full flex-col items-center justify-center text-center">
+          <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+            سامانه مدیریت پیامکی
+          </h1>
+          <h2 className="mt-1 text-sm font-medium text-muted-foreground">
+            اداره برق و مخابرات - شرکت آب و فاضلاب خراسان رضوی
+          </h2>
+        </div>
       </div>
-
-      {/* نوار وضعیت */}
-      <BentoBox className="flex items-center justify-between gap-3 lg:col-span-3">
-        <div className="flex items-center gap-3">
-          <span
-            className={cn(
-              "flex h-10 w-10 items-center justify-center rounded-full",
-              d.status.connected === true
-                ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-300"
-                : d.status.connected === false
-                  ? "bg-red-100 text-red-600 dark:bg-red-950/50 dark:text-red-400"
-                  : "bg-slate-100 text-slate-500 dark:bg-slate-800"
-            )}
-          >
-            <Network className="h-5 w-5" />
-          </span>
-          <div>
-            <p className="text-sm font-bold">
-              {d.status.connected === null ? "در حال اتصال به مودم..." : d.status.connected ? "مودم متصل است" : "خطا در اتصال"}
-            </p>
-            <p className="text-[11px] text-muted-foreground">
-              {d.status.network_type ? `${faDigits(d.status.network_type)} · سیگنال ${faDigits(d.status.signal_level ?? 0)}٪` : d.status.router_host ?? "—"}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="hidden items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-600 sm:flex dark:bg-slate-800 dark:text-slate-300">
-            <BatteryCharging className="h-3.5 w-3.5 text-emerald-500" />
-            سیم‌کارت: {faDigits(d.status.sim_status ?? "—")}
-          </span>
-          <Button size="sm" variant="outline" onClick={d.reload} disabled={d.refreshing} className="gap-1.5 text-xs">
-            <RefreshCw className={cn("h-3.5 w-3.5", d.refreshing && "animate-spin")} />
-            تازه‌سازی
-          </Button>
-        </div>
-      </BentoBox>
 
       {/* کاشی‌های آماری */}
       <div className="grid gap-4 sm:grid-cols-2 lg:col-span-3 lg:grid-cols-4">
         <StatTile
           icon={Inbox}
           label="پیامک‌های وارده"
-          value={faDigits(receivedTotal)}
-          sub={`${faDigits(d.status.unread_sms ?? 0)} خوانده‌نشده`}
-          loading={!d.stats}
+          value={faDigits(d.receivedTotal)}
+          sub={d.inbox.data ? `${faDigits(d.inbox.data.messages?.length ?? 0)} در صندوق` : undefined}
+          loading={d.stats.loading}
           color="bg-sky-100 text-sky-600 dark:bg-sky-950/50 dark:text-sky-300"
           onClick={() => setModal({
             title: "پیامک‌های دریافتی",
@@ -211,9 +162,9 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: PageId) => v
         <StatTile
           icon={CheckCheck}
           label="ارسال‌شده (کل)"
-          value={faDigits(sentTotal)}
-          sub={sentToday > 0 ? `امروز: ${faDigits(sentToday)} پیامک` : "امروز ارسالی نداشتید"}
-          loading={!d.stats}
+          value={faDigits(d.sentTotal)}
+          sub={d.sentToday > 0 ? `امروز: ${faDigits(d.sentToday)} پیامک` : "امروز ارسالی نداشتید"}
+          loading={d.stats.loading}
           color="bg-emerald-100 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300"
           onClick={() => setModal({
             title: "پیامک‌های ارسال‌شده",
@@ -236,7 +187,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: PageId) => v
           label="ارسال نشده"
           value={faDigits(d.counts.pending)}
           sub="زمان‌بندی‌های در انتظار"
-          loading={!d.stats}
+          loading={d.stats.loading}
           color="bg-amber-100 text-amber-600 dark:bg-amber-950/50 dark:text-amber-300"
           onClick={() => setModal({
             title: "زمان‌بندی‌های در انتظار",
@@ -259,7 +210,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: PageId) => v
           label="ارسال ناموفق"
           value={faDigits(d.counts.failed)}
           sub="زمان‌بندی‌های شکست خورده"
-          loading={!d.stats}
+          loading={d.stats.loading}
           color="bg-red-100 text-red-600 dark:bg-red-950/50 dark:text-red-300"
           onClick={() => setModal({
             title: "ارسال‌های ناموفق",
@@ -289,11 +240,11 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: PageId) => v
             <span className="h-2.5 w-2.5 rounded-full bg-blue-600" /> پیامک‌های دریافتی
           </span>
         </div>
-        {d.activity.length === 0 ? (
+        {(d.activity.data?.series?.length ?? 0) === 0 ? (
           <Skeleton className="h-[220px] w-full" />
         ) : (
           <div className="w-full">
-            <BarChart data={d.activity} />
+            <BarChart data={d.activity.data!.series!} />
           </div>
         )}
       </BentoBox>
@@ -329,12 +280,18 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: PageId) => v
         </div>
       </BentoBox>
 
-      {/* آخرین پیامک‌های دریافتی */}
+      {/* آخرین پیامک‌های دریافتی — اسکرول داخلی (Task 4) */}
       <BentoBox title="آخرین پیامک‌های دریافتی" icon={Inbox} className="lg:col-span-3">
-        {d.recent.length === 0 && !d.refreshing ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">پیامک دریافتی‌ای ثبت نشده است.</p>
+        {d.inbox.loading || !d.inbox.data ? (
+          <div className="flex flex-col gap-2 py-2">
+            {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+          </div>
+        ) : d.recent.length === 0 ? (
+          <div className="flex min-h-[120px] items-center justify-center text-sm text-muted-foreground">
+            پیامک دریافتی‌ای ثبت نشده است.
+          </div>
         ) : (
-          <ul className="divide-y divide-slate-100 dark:divide-white/5">
+          <ul className="custom-scrollbar max-h-[400px] divide-y divide-slate-100 overflow-y-auto dark:divide-white/5">
             {d.recent.map((m) => {
               const cat = getCategoryMeta(m.category ?? "other");
               return (
