@@ -26,7 +26,7 @@ import io
 
 import jdatetime
 
-from categorize import classify_message, INBOX_CATEGORIES
+from categorize import classify_message
 from import_export import (
     MAX_IMPORT_BYTES,
     HEADER_MAP,
