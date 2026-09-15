@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import type { SendPrefill, Template } from "@/lib/types";
 import DatePicker from "react-multi-date-picker";
 import persianFa from "react-date-object/locales/persian_fa";
+import persian from "react-date-object/calendars/persian";
 
 const VARIABLES = [
   { label: "نام", tag: "{نام}" },
@@ -248,6 +249,7 @@ export default function SendPage({
                     value={scheduleDate}
                     onChange={(date) => setScheduleDate(date ? date.format("YYYY/MM/DD") : null)}
                     format="YYYY/MM/DD"
+                    calendar={persian}
                     locale={persianFa}
                     inputClass="pl-10 pr-4 font-mono"
                     placeholder="انتخاب تاریخ"
