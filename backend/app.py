@@ -598,6 +598,62 @@ def api_scheduled_delete(job_id: int):
     logger.info("زمان‌بندی %d لغو شد", job_id)
     return jsonify({"success": True, "deleted": True})
 
+# ---------------------------- SCHEDULED SMS UPDATE ----------------------------
+@app.route("/api/scheduled/<int:job_id>", methods=["PUT"])
+@require_api_key
+def api_scheduled_update(job_id: int):
+    """Update a pending scheduled SMS."""
+    data = request.get_json(silent=True) or {}
+    mobile = str(data.get("mobile", "")).strip()
+    message = str(data.get("message", "")).strip()
+    scheduled_at = str(data.get("scheduled_at", "")).strip()
+    max_retries = int(data.get("max_retries", 3))
+
+    if not mobile or not message or not scheduled_at:
+        return jsonify({"error": "شماره، متن و زمان ارسال الزامی است"}), 400
+    if not _valid_phone(mobile):
+        return jsonify({"error": "شماره موبایل معتبر نیست"}), 400
+    if max_retries < 1 or max_retries > 10:
+        return jsonify({"error": "تعداد تلاش باید بین ۱ و ۱۰ باشد"}), 400
+
+    try:
+        scheduled_at_utc = jalali_to_utc(scheduled_at)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    run_date = datetime.fromisoformat(scheduled_at_utc)
+    if run_date <= datetime.now(timezone.utc):
+        return jsonify({"error": "زمان انتخابی باید در آینده باشد"}), 400
+
+    conn = get_db()
+    row = conn.execute("SELECT status FROM scheduled_sms WHERE id=?", (job_id,)).fetchone()
+    if not row:
+        conn.close()
+        return jsonify({"error": "زمان‌بندی یافت نشد"}), 404
+    if row["status"] != "pending":
+        conn.close()
+        return jsonify({"error": "فقط زمان‌بندی‌های در انتظار قابل ویرایش هستند"}), 400
+
+    conn.execute("""
+        UPDATE scheduled_sms SET mobile=?, message=?, scheduled_at_utc=?, max_retries=?, retries=0 WHERE id=?
+    """, (mobile, message, scheduled_at_utc, max_retries, job_id))
+    conn.commit()
+    conn.close()
+
+    try:
+        scheduler.remove_job(f"scheduled_{job_id}")
+    except Exception:
+        pass
+    scheduler.add_job(
+        send_scheduled_job,
+        DateTrigger(run_date=run_date),
+        args=[job_id, mobile, message, max_retries],
+        id=f"scheduled_{job_id}",
+        replace_existing=True
+    )
+    logger.info("زمان‌بندی %d ویرایش شد", job_id)
+    return jsonify({"success": True, "scheduled_at_utc": scheduled_at_utc})
+
 # ---------------------------- SMS COUNTS ----------------------------
 @app.route("/api/sms_counts", methods=["GET"])
 @require_api_key

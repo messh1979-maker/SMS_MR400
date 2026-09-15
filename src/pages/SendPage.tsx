@@ -251,7 +251,7 @@ export default function SendPage({
                     format="YYYY/MM/DD"
                     calendar={persian}
                     locale={persianFa}
-                    inputClass="pl-10 pr-4 font-mono"
+                    inputClass="pl-10 pr-4 font-mono text-slate-900 dark:text-slate-100"
                     placeholder="انتخاب تاریخ"
                   />
                 </div>
