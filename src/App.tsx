@@ -11,7 +11,7 @@ import ContactsPage from "@/pages/ContactsPage";
 import SettingsPage from "@/pages/SettingsPage";
 import { showToast } from "@/lib/toast";
 import { apiRequest } from "@/lib/api";
-import type { Contact, PageId } from "@/lib/types";
+import type { Contact, ContactDetail, PageId, SendPrefill } from "@/lib/types";
 
 export default function App() {
   const [dark, setDark] = useState<boolean>(() => {
@@ -24,7 +24,7 @@ export default function App() {
   const [collapsed, setCollapsed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [prefill, setPrefill] = useState<string | null>(null);
+  const [prefill, setPrefill] = useState<SendPrefill | null>(null);
   const [connected, setConnected] = useState<boolean | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
 
@@ -68,8 +68,8 @@ export default function App() {
     } catch { /* بی‌صدا */ }
   }, [contacts.length]);
 
-  const handlePickContact = useCallback((c: Contact) => { setPrefill(c.number); setPage("send"); }, []);
-  const handleSendTo = useCallback((c: Contact) => { setPrefill(c.number); setPage("send"); }, []);
+  const handlePickContact = useCallback((c: Contact) => { setPrefill({ mobile: c.number }); setPage("send"); }, []);
+  const handleSendTo = useCallback((c: ContactDetail) => { setPrefill({ mobile: c.mobile, first_name: c.first_name, last_name: c.last_name }); setPage("send"); }, []);
   const consumePrefill = useCallback(() => setPrefill(null), []);
   const navigate = useCallback((p: PageId) => setPage(p), []);
   
@@ -86,7 +86,7 @@ export default function App() {
         <Topbar page={page} dark={dark} onToggleTheme={() => setDark((v) => !v)} onOpenCommand={openPalette} onRefresh={refresh} refreshing={false} connected={connected} />
         <main className="flex-1 p-4 sm:p-6">
           {page === "dashboard" && <Dashboard key={refreshNonce} onNavigate={navigate} />}
-          {page === "send" && <SendPage key={refreshNonce} prefillNumber={prefill} onConsumePrefill={consumePrefill} />}
+          {page === "send" && <SendPage key={refreshNonce} prefill={prefill} onConsumePrefill={consumePrefill} />}
           {page === "inbox" && <InboxPage key={refreshNonce} />}
           {page === "history" && <HistoryPage key={refreshNonce} />}
           {page === "contacts" && <ContactsPage key={refreshNonce} onSendTo={handleSendTo} />}

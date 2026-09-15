@@ -1,21 +1,27 @@
 """
 SMS Gateway Backend -- TP-Link Archer MR400 v4.3 (4G LTE) integration
-Security Hardened Version
+Security Hardened Version with SQLite, APScheduler, Advanced Phonebook, Templates, Scheduled SMS
 """
 import json
 import logging
 import os
 import re
+import sqlite3
 import tempfile
+from contextlib import contextmanager
 from dataclasses import asdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 from threading import Lock
 
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.date import DateTrigger
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+
+import jdatetime
 
 load_dotenv(encoding="utf-8-sig")
 
@@ -41,7 +47,55 @@ if not API_KEY:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("sms-gateway")
 
-# ----------------------------------------------------------- لاگ پیامک‌ها --
+# ----------------------------------------------------------- SQLite DB --
+DB_PATH = Path(__file__).resolve().parent / "data.db"
+
+def get_db():
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = get_db()
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS contacts (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        first_name  TEXT    NOT NULL DEFAULT '',
+        last_name   TEXT    NOT NULL DEFAULT '',
+        mobile      TEXT    NOT NULL DEFAULT '',
+        landline    TEXT    NOT NULL DEFAULT '',
+        city        TEXT    NOT NULL DEFAULT '',
+        department  TEXT    NOT NULL DEFAULT '',
+        company     TEXT    NOT NULL DEFAULT '',
+        province    TEXT    NOT NULL DEFAULT '',
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_contacts_mobile ON contacts(mobile);
+
+    CREATE TABLE IF NOT EXISTS templates (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        title      TEXT    NOT NULL DEFAULT '',
+        body       TEXT    NOT NULL DEFAULT '',
+        created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS scheduled_sms (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        mobile            TEXT    NOT NULL,
+        message           TEXT    NOT NULL,
+        scheduled_at_utc  TEXT    NOT NULL,
+        status            TEXT    NOT NULL DEFAULT 'pending',
+        created_at        TEXT    NOT NULL DEFAULT (datetime('now')),
+        sent_at           TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_scheduled_status ON scheduled_sms(status);
+    """)
+    conn.close()
+
+init_db()
+
+# --------------------------------------------------------------- لاگ پیامک‌ها --
 SENT_LOG_FILE = Path(__file__).resolve().parent / "sent_log.json"
 
 def _load_sent_log() -> list:
@@ -55,7 +109,6 @@ def _load_sent_log() -> list:
 def _append_sent_log(phone: str, message: str) -> None:
     entries = _load_sent_log()
     entries.append({"phone": phone, "message": message, "sent_at": datetime.now().isoformat(timespec="seconds")})
-    # نوشتن اتمی (Atomic Write) برای جلوگیری از Corruption فایل در صورت قطع برق یا Race Condition
     try:
         fd, tmp_path = tempfile.mkstemp(dir=SENT_LOG_FILE.parent, suffix=".json")
         with os.fdopen(fd, 'w', encoding="utf-8") as f:
@@ -68,6 +121,55 @@ def _append_sent_log(phone: str, message: str) -> None:
 app = Flask(__name__)
 CORS(app, origins=ALLOWED_ORIGINS)
 _lock = Lock()
+
+# ----------------------------------------------------------- APScheduler --
+scheduler = BackgroundScheduler(timezone="UTC")
+scheduler.start()
+
+def send_scheduled_job(job_id: int, mobile: str, message: str):
+    """Background job to send a scheduled SMS."""
+    try:
+        from tplinkrouterc6u import TplinkRouterProvider
+        router = TplinkRouterProvider.get_client(ROUTER_HOST, ROUTER_PASSWORD, ROUTER_USER)
+        router.authorize()
+        try:
+            router.send_sms(mobile, message)
+            conn = get_db()
+            conn.execute("UPDATE scheduled_sms SET status='sent', sent_at=? WHERE id=?", (datetime.now(timezone.utc).isoformat(), job_id))
+            conn.commit()
+            conn.close()
+            _append_sent_log(mobile, message)
+            logger.info("زمان‌بندی %d برای %s ارسال شد", job_id, mobile)
+        finally:
+            router.logout()
+    except Exception as e:
+        logger.exception("خطا در ارسال زمان‌بندی %d: %s", job_id, e)
+        conn = get_db()
+        conn.execute("UPDATE scheduled_sms SET status='failed' WHERE id=?", (job_id,))
+        conn.commit()
+        conn.close()
+
+def load_pending_scheduled():
+    """Load pending scheduled SMS jobs on startup."""
+    conn = get_db()
+    rows = conn.execute("SELECT id, mobile, message, scheduled_at_utc FROM scheduled_sms WHERE status='pending'").fetchall()
+    conn.close()
+    for row in rows:
+        try:
+            run_date = datetime.fromisoformat(row["scheduled_at_utc"])
+            if run_date > datetime.now(timezone.utc):
+                scheduler.add_job(
+                    send_scheduled_job,
+                    DateTrigger(run_date=run_date),
+                    args=[row["id"], row["mobile"], row["message"]],
+                    id=f"scheduled_{row['id']}",
+                    replace_existing=True
+                )
+                logger.info("زمان‌بندی %d برای %s بازیابی شد", row["id"], run_date.isoformat())
+        except Exception as e:
+            logger.error("خطا در بازیابی زمان‌بندی %d: %s", row["id"], e)
+
+load_pending_scheduled()
 
 # -------------------------------------------------------- احراز هویت API --
 def require_api_key(f):
@@ -91,12 +193,10 @@ def with_modem(func):
             except Exception as exc:
                 logger.error("ورود به مودم ناموفق بود: %s", exc)
                 return jsonify({"error": "اتصال یا ورود به مودم ناموفق بود"}), 502
-            
             try:
                 return func(router, *args, **kwargs)
             except Exception as exc:
                 logger.exception("خطای داخلی در ارتباط با مودم")
-                # عدم افشای جزئیات خطا به کلاینت (Information Disclosure Prevention)
                 return jsonify({"error": "خطای داخلی سرور در ارتباط با مودم"}), 502
             finally:
                 try:
@@ -118,6 +218,27 @@ def _sms_to_dict(sms) -> dict:
     if isinstance(received_at, datetime):
         data["received_at"] = received_at.isoformat()
     return data
+
+# --------------------------------------------------------- توابع کمکی شمسی --
+def jalali_to_utc(jalali_str: str) -> str:
+    """
+    Convert Persian date string (e.g., '1403/07/15 14:30') to UTC ISO string.
+    Assumes Iran timezone (UTC+3:30).
+    """
+    try:
+        parts = jalali_str.strip().split()
+        date_part = parts[0]
+        time_part = parts[1] if len(parts) > 1 else "00:00"
+        year, month, day = map(int, date_part.split("/"))
+        hour, minute = map(int, time_part.split(":"))
+        jalali_dt = jdatetime.datetime(year, month, day, hour, minute)
+        gregorian_dt = jalali_dt.togregorian()
+        # Iran is UTC+3:30
+        utc_dt = gregorian_dt - timedelta(hours=3, minutes=30)
+        return utc_dt.replace(tzinfo=timezone.utc).isoformat()
+    except Exception as e:
+        logger.error("خطا در تبدیل تاریخ شمسی: %s", e)
+        raise ValueError("فرمت تاریخ نامعتبر است. نمونه: 1403/07/15 14:30")
 
 # ----------------------------------------------------------------- روت‌ها --
 @app.route("/api/status", methods=["GET"])
@@ -233,31 +354,228 @@ def api_activity(router):
     series = [{"date": (today - timedelta(days=i)).isoformat(), "received": recv_by.get(today - timedelta(days=i), 0), "sent": sent_by.get(today - timedelta(days=i), 0)} for i in range(days - 1, -1, -1)]
     return jsonify({"days": days, "series": series})
 
+# ---------------------------- CONTACTS CRUD ----------------------------
 @app.route("/api/contacts", methods=["GET"])
 @require_api_key
-@with_modem
-def api_contacts(router):
-    contacts = {}
-    for m in router.get_sms():
-        sender = m.sender or "ناشناس"
-        c = contacts.setdefault(sender, {"number": sender, "received": 0, "sent": 0, "last_at": None, "last_message": None})
-        c["received"] += 1
-        iso = m.received_at.isoformat() if m.received_at else None
-        if iso and (c["last_at"] is None or iso > c["last_at"]):
-            c["last_at"] = iso
-            c["last_message"] = m.content
+def api_contacts_list():
+    """List all contacts from SQLite phonebook."""
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM contacts ORDER BY last_name, first_name").fetchall()
+    conn.close()
+    contacts = [dict(row) for row in rows]
+    return jsonify({"contacts": contacts})
 
-    for entry in _load_sent_log():
-        phone = str(entry.get("phone", "ناشناس"))
-        c = contacts.setdefault(phone, {"number": phone, "received": 0, "sent": 0, "last_at": None, "last_message": None})
-        c["sent"] += 1
-        sent_at = entry.get("sent_at")
-        if sent_at and (c["last_at"] is None or sent_at > c["last_at"]):
-            c["last_at"] = sent_at
+@app.route("/api/contacts", methods=["POST"])
+@require_api_key
+def api_contacts_create():
+    """Create a new contact."""
+    data = request.get_json(silent=True) or {}
+    required = ["first_name", "last_name", "mobile"]
+    if not all(data.get(f) for f in required):
+        return jsonify({"error": "فیلدهای نام، نام خانوادگی و موبایل الزامی هستند"}), 400
+    if not _valid_phone(data["mobile"]):
+        return jsonify({"error": "شماره موبایل معتبر نیست"}), 400
 
-    result = sorted(contacts.values(), key=lambda c: (c["received"] + c["sent"]), reverse=True)
-    return jsonify({"contacts": result[:100]})
+    conn = get_db()
+    cur = conn.execute("""
+        INSERT INTO contacts (first_name, last_name, mobile, landline, city, department, company, province)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        data.get("first_name", "").strip(),
+        data.get("last_name", "").strip(),
+        data.get("mobile", "").strip(),
+        data.get("landline", "").strip(),
+        data.get("city", "").strip(),
+        data.get("department", "").strip(),
+        data.get("company", "").strip(),
+        data.get("province", "").strip(),
+    ))
+    conn.commit()
+    contact_id = cur.lastrowid
+    conn.close()
+    logger.info("مخاطب %d ایجاد شد", contact_id)
+    return jsonify({"success": True, "id": contact_id}), 201
 
+@app.route("/api/contacts/<int:contact_id>", methods=["PUT"])
+@require_api_key
+def api_contacts_update(contact_id: int):
+    """Update an existing contact."""
+    data = request.get_json(silent=True) or {}
+    if not any(data.get(f) for f in ["first_name", "last_name", "mobile", "landline", "city", "department", "company", "province"]):
+        return jsonify({"error": "هیچ فیلدی برای به‌روزرسانی ارسال نشده"}), 400
+
+    if "mobile" in data and not _valid_phone(data["mobile"]):
+        return jsonify({"error": "شماره موبایل معتبر نیست"}), 400
+
+    conn = get_db()
+    cur = conn.execute("SELECT * FROM contacts WHERE id=?", (contact_id,))
+    if not cur.fetchone():
+        conn.close()
+        return jsonify({"error": "مخاطب یافت نشد"}), 404
+
+    conn.execute("""
+        UPDATE contacts SET
+            first_name=COALESCE(?, first_name),
+            last_name=COALESCE(?, last_name),
+            mobile=COALESCE(?, mobile),
+            landline=COALESCE(?, landline),
+            city=COALESCE(?, city),
+            department=COALESCE(?, department),
+            company=COALESCE(?, company),
+            province=COALESCE(?, province),
+            updated_at=datetime('now')
+        WHERE id=?
+    """, (
+        data.get("first_name"),
+        data.get("last_name"),
+        data.get("mobile"),
+        data.get("landline"),
+        data.get("city"),
+        data.get("department"),
+        data.get("company"),
+        data.get("province"),
+        contact_id
+    ))
+    conn.commit()
+    conn.close()
+    logger.info("مخاطب %d به‌روزرسانی شد", contact_id)
+    return jsonify({"success": True})
+
+@app.route("/api/contacts/<int:contact_id>", methods=["DELETE"])
+@require_api_key
+def api_contacts_delete(contact_id: int):
+    """Delete a contact."""
+    conn = get_db()
+    cur = conn.execute("DELETE FROM contacts WHERE id=?", (contact_id,))
+    conn.commit()
+    deleted = cur.rowcount
+    conn.close()
+    if deleted == 0:
+        return jsonify({"error": "مخاطب یافت نشد"}), 404
+    logger.info("مخاطب %d حذف شد", contact_id)
+    return jsonify({"success": True, "deleted": deleted})
+
+# ---------------------------- TEMPLATES CRUD ----------------------------
+@app.route("/api/templates", methods=["GET"])
+@require_api_key
+def api_templates_list():
+    """List all message templates."""
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM templates ORDER BY title").fetchall()
+    conn.close()
+    return jsonify({"templates": [dict(row) for row in rows]})
+
+@app.route("/api/templates", methods=["POST"])
+@require_api_key
+def api_templates_create():
+    """Create a new template."""
+    data = request.get_json(silent=True) or {}
+    if not data.get("title") or not data.get("body"):
+        return jsonify({"error": "عنوان و متن قالب الزامی است"}), 400
+
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO templates (title, body) VALUES (?, ?)",
+        (data["title"].strip(), data["body"].strip())
+    )
+    conn.commit()
+    template_id = cur.lastrowid
+    conn.close()
+    logger.info("قالب %d ایجاد شد", template_id)
+    return jsonify({"success": True, "id": template_id}), 201
+
+@app.route("/api/templates/<int:template_id>", methods=["DELETE"])
+@require_api_key
+def api_templates_delete(template_id: int):
+    """Delete a template."""
+    conn = get_db()
+    cur = conn.execute("DELETE FROM templates WHERE id=?", (template_id,))
+    conn.commit()
+    deleted = cur.rowcount
+    conn.close()
+    if deleted == 0:
+        return jsonify({"error": "قالب یافت نشد"}), 404
+    logger.info("قالب %d حذف شد", template_id)
+    return jsonify({"success": True, "deleted": deleted})
+
+# ---------------------------- SCHEDULED SMS ----------------------------
+@app.route("/api/send_scheduled", methods=["POST"])
+@require_api_key
+def api_send_scheduled():
+    """Schedule an SMS for future delivery (Persian calendar input)."""
+    data = request.get_json(silent=True) or {}
+    mobile = str(data.get("mobile", "")).strip()
+    message = str(data.get("message", "")).strip()
+    scheduled_at = str(data.get("scheduled_at", "")).strip()  # Persian: '1403/07/15 14:30'
+
+    if not mobile or not message or not scheduled_at:
+        return jsonify({"error": "شماره، متن و زمان ارسال الزامی است"}), 400
+    if not _valid_phone(mobile):
+        return jsonify({"error": "شماره موبایل معتبر نیست"}), 400
+    if len(message) > 5 * 160:
+        return jsonify({"error": "متن پیام بیش از حد طولانی است"}), 400
+
+    try:
+        scheduled_at_utc = jalali_to_utc(scheduled_at)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    run_date = datetime.fromisoformat(scheduled_at_utc)
+    if run_date <= datetime.now(timezone.utc):
+        return jsonify({"error": "زمان انتخابی باید در آینده باشد"}), 400
+
+    conn = get_db()
+    cur = conn.execute("""
+        INSERT INTO scheduled_sms (mobile, message, scheduled_at_utc, status)
+        VALUES (?, ?, ?, 'pending')
+    """, (mobile, message, scheduled_at_utc))
+    conn.commit()
+    job_id = cur.lastrowid
+    conn.close()
+
+    scheduler.add_job(
+        send_scheduled_job,
+        DateTrigger(run_date=run_date),
+        args=[job_id, mobile, message],
+        id=f"scheduled_{job_id}",
+        replace_existing=True
+    )
+    logger.info("زمان‌بندی %d برای %s در %s ثبت شد", job_id, mobile, scheduled_at_utc)
+    return jsonify({"success": True, "id": job_id, "scheduled_at_utc": scheduled_at_utc})
+
+@app.route("/api/scheduled", methods=["GET"])
+@require_api_key
+def api_scheduled_list():
+    """List scheduled SMS jobs."""
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM scheduled_sms ORDER BY scheduled_at_utc").fetchall()
+    conn.close()
+    return jsonify({"scheduled": [dict(row) for row in rows]})
+
+@app.route("/api/scheduled/<int:job_id>", methods=["DELETE"])
+@require_api_key
+def api_scheduled_delete(job_id: int):
+    """Cancel a scheduled SMS."""
+    conn = get_db()
+    row = conn.execute("SELECT status FROM scheduled_sms WHERE id=?", (job_id,)).fetchone()
+    if not row:
+        conn.close()
+        return jsonify({"error": "زمان‌بندی یافت نشد"}), 404
+    if row["status"] != "pending":
+        conn.close()
+        return jsonify({"error": "فقط زمان‌بندی‌های در انتظار قابل لغو هستند"}), 400
+
+    try:
+        scheduler.remove_job(f"scheduled_{job_id}")
+    except Exception:
+        pass
+    conn.execute("UPDATE scheduled_sms SET status='cancelled' WHERE id=?", (job_id,))
+    conn.commit()
+    conn.close()
+    logger.info("زمان‌بندی %d لغو شد", job_id)
+    return jsonify({"success": True, "deleted": True})
+
+# ---------------------------- HISTORY (no modem needed) ----------------------------
 @app.route("/api/history", methods=["GET"])
 @require_api_key
 def api_history():
@@ -269,4 +587,7 @@ def not_found(_):
     return jsonify({"error": "مسیر یافت نشد"}), 404
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=PORT, debug=DEBUG)
+    try:
+        app.run(host="127.0.0.1", port=PORT, debug=DEBUG)
+    finally:
+        scheduler.shutdown()

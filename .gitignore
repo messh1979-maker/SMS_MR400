@@ -16,6 +16,12 @@ __pycache__/
 # داده‌های runtime (شامل شماره‌ها و پیامک‌ها)
 backend/sent_log.json
 
+# SQLite
+backend/data.db
+backend/data.db-journal
+backend/data.db-wal
+backend/data.db-shm
+
 # لاگ‌ها
 *.log
 logs/

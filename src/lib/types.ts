@@ -26,4 +26,41 @@ export type Contact = {
   last_message?: string | null;
 };
 
+export type ContactDetail = {
+  id: number;
+  first_name: string;
+  last_name: string;
+  mobile: string;
+  landline: string;
+  city: string;
+  department: string;
+  company: string;
+  province: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Template = {
+  id: number;
+  title: string;
+  body: string;
+  created_at: string;
+};
+
+export type ScheduledSms = {
+  id: number;
+  mobile: string;
+  message: string;
+  scheduled_at_utc: string;
+  status: "pending" | "sent" | "failed" | "cancelled";
+  created_at: string;
+  sent_at?: string | null;
+};
+
+export type SendPrefill = {
+  mobile: string;
+  first_name?: string;
+  last_name?: string;
+};
+
 export type PageId = "dashboard" | "send" | "inbox" | "history" | "contacts" | "settings";
