@@ -30,7 +30,7 @@ export default function ScheduledPage() {
   const [items, setItems] = useState<ScheduledSms[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState({ mobile: "", message: "", scheduled_at: "", max_retries: 3 });
+  const [editForm, setEditForm] = useState({ mobile: "", message: "", date: "", time: "", max_retries: 3 });
 
   async function load() {
     try {
@@ -44,20 +44,27 @@ export default function ScheduledPage() {
 
   function startEdit(item: ScheduledSms) {
     setEditingId(item.id);
-    const jalali = new Date(item.scheduled_at_utc).toLocaleDateString("fa-IR");
-    setEditForm({ mobile: item.mobile, message: item.message, scheduled_at: jalali, max_retries: item.max_retries });
+    const j = new Date(item.scheduled_at_utc);
+    const date = j.toLocaleDateString("fa-IR");
+    const time = `${String(j.getHours()).padStart(2, "0")}:${String(j.getMinutes()).padStart(2, "0")}`;
+    setEditForm({ mobile: item.mobile, message: item.message, date, time, max_retries: item.max_retries });
   }
 
   function cancelEdit() {
     setEditingId(null);
-    setEditForm({ mobile: "", message: "", scheduled_at: "", max_retries: 3 });
+    setEditForm({ mobile: "", message: "", date: "", time: "", max_retries: 3 });
   }
 
   async function handleSave(id: number) {
     try {
       await apiRequest(`/api/scheduled/${id}`, {
         method: "PUT",
-        body: JSON.stringify({ ...editForm, max_retries: Number(editForm.max_retries) }),
+        body: JSON.stringify({
+          mobile: editForm.mobile,
+          message: editForm.message,
+          scheduled_at: `${editForm.date} ${editForm.time}`,
+          max_retries: Number(editForm.max_retries),
+        }),
       });
       showToast("زمان‌بندی بروز شد.");
       setEditingId(null);
@@ -104,7 +111,11 @@ export default function ScheduledPage() {
                   </div>
                   <div className="flex-1 min-w-[140px]">
                     <Label className="text-xs text-muted-foreground">تاریخ شمسی</Label>
-                    <Input value={editForm.scheduled_at} onChange={(e) => setEditForm((f) => ({ ...f, scheduled_at: e.target.value }))} className="text-sm mt-1 font-mono" />
+                    <Input value={editForm.date} onChange={(e) => setEditForm((f) => ({ ...f, date: e.target.value }))} placeholder="۱۴۰۵/۰۷/۰۱" className="text-sm mt-1 font-mono" />
+                  </div>
+                  <div className="w-28">
+                    <Label className="text-xs text-muted-foreground">ساعت ارسال</Label>
+                    <Input type="time" value={editForm.time} onChange={(e) => setEditForm((f) => ({ ...f, time: e.target.value }))} className="text-sm mt-1 font-mono" />
                   </div>
                   <div className="w-24">
                     <Label className="text-xs text-muted-foreground">تلاش</Label>

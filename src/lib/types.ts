@@ -4,6 +4,7 @@ export type SmsMessage = {
   content: string;
   received_at: string;
   unread: boolean;
+  category?: string;
 };
 
 export type NumberStat = { number: string; count: number; last_at?: string | null };
@@ -16,7 +17,14 @@ export type StatsData = {
 
 export type ActivityPoint = { date: string; received: number; sent: number };
 
-export type SentEntry = { phone: string; message: string; sent_at: string };
+export type SentEntry = {
+  id: number;
+  phone: string;
+  message: string;
+  sent_at: string;
+  status: "active" | "archived" | "deleted";
+  updated_at?: string | null;
+};
 
 export type Contact = {
   number: string;
@@ -36,6 +44,7 @@ export type ContactDetail = {
   department: string;
   company: string;
   province: string;
+  notes: string;
   created_at: string;
   updated_at: string;
 };

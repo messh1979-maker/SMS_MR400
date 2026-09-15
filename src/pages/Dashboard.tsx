@@ -15,12 +15,13 @@ import {
 } from "lucide-react";
 import BarChart from "@/components/BarChart";
 import BentoBox from "@/components/BentoBox";
+import RecordsModal from "@/components/RecordsModal";
 import Skeleton from "@/components/Skeleton";
 import { Button } from "@/components/ui/button";
+import { getCategoryMeta } from "@/lib/categories";
 import { apiRequest } from "@/lib/api";
 import { faDigits, formatTime } from "@/lib/format";
-import { getCategory } from "@/lib/sms";
-import type { ActivityPoint, PageId, SmsMessage, StatsData, SmsCounts } from "@/lib/types";
+import type { ActivityPoint, PageId, SmsMessage, ScheduledSms, SentEntry, StatsData, SmsCounts } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type Status = {
@@ -77,6 +78,7 @@ function StatTile({
   sub,
   loading,
   color,
+  onClick,
 }: {
   icon: typeof Send;
   label: string;
@@ -84,35 +86,50 @@ function StatTile({
   sub?: string;
   loading: boolean;
   color: string;
+  onClick?: () => void;
 }) {
   return (
-    <BentoBox className="relative overflow-hidden">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-sm font-medium text-muted-foreground">{label}</p>
-          <div className="mt-1.5 flex items-center gap-2">
-            {loading ? (
-              <Skeleton className="h-8 w-16" />
-            ) : (
-              <p className="fa-nums text-[28px] font-bold leading-none text-slate-900 dark:text-slate-100">
-                {value}
-              </p>
-            )}
-            {sub && !loading ? (
-              <span className="mt-1 text-[13px] font-medium text-muted-foreground">{sub}</span>
-            ) : null}
+    <BentoBox className={cn("relative overflow-hidden", onClick && "transition-transform hover:scale-[1.01] active:scale-[0.99]")}>
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={!onClick}
+        className="block w-full text-right disabled:cursor-default"
+        aria-label={onClick ? `مشاهده جزئیات ${label}` : undefined}
+      >
+        <div className="flex items-start justify-between">
+          <div>
+            <p className="text-sm font-medium text-muted-foreground">{label}</p>
+            <div className="mt-1.5 flex items-center gap-2">
+              {loading ? (
+                <Skeleton className="h-8 w-16" />
+              ) : (
+                <p className="fa-nums text-[28px] font-bold leading-none text-slate-900 dark:text-slate-100">
+                  {value}
+                </p>
+              )}
+              {sub && !loading ? (
+                <span className="mt-1 text-[13px] font-medium text-muted-foreground">{sub}</span>
+              ) : null}
+            </div>
           </div>
+          <span className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl", color)}>
+            <Icon className="h-5 w-5" />
+          </span>
         </div>
-        <span className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl", color)}>
-          <Icon className="h-5 w-5" />
-        </span>
-      </div>
+      </button>
     </BentoBox>
   );
 }
 
 export default function Dashboard({ onNavigate }: { onNavigate: (p: PageId) => void }) {
   const d = useDashboard();
+  const [modal, setModal] = useState<{
+    title: string;
+    icon: typeof Send;
+    load: () => Promise<Array<{ id?: number | string }>>;
+    render: (row: { id?: number | string }, index: number) => JSX.Element;
+  } | null>(null);
 
   const sentToday = d.activity.filter((a) => a.sent > 0).reduce((s, a) => s + a.sent, 0);
   const receivedTotal = d.stats?.received.total ?? 0;
@@ -120,6 +137,16 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: PageId) => v
 
   return (
     <div dir="rtl" className="fade-in-up grid gap-4 lg:grid-cols-3">
+      {/* هدر برند */}
+      <div className="lg:col-span-3">
+        <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+          سامانه مدیریت پیامکی
+        </h1>
+        <p className="mt-1 text-sm font-medium text-muted-foreground">
+          اداره برق و مخابرات - شرکت آب و فاضلاب خراسان رضوی
+        </p>
+      </div>
+
       {/* نوار وضعیت */}
       <BentoBox className="flex items-center justify-between gap-3 lg:col-span-3">
         <div className="flex items-center gap-3">
@@ -165,6 +192,21 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: PageId) => v
           sub={`${faDigits(d.status.unread_sms ?? 0)} خوانده‌نشده`}
           loading={!d.stats}
           color="bg-sky-100 text-sky-600 dark:bg-sky-950/50 dark:text-sky-300"
+          onClick={() => setModal({
+            title: "پیامک‌های دریافتی",
+            icon: Inbox,
+            load: async () => (await apiRequest<{ messages: SmsMessage[] }>("/api/inbox")).messages,
+            render: (row) => {
+              const m = row as SmsMessage;
+              return <div>
+                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span className="fa-nums font-mono font-medium text-slate-700 dark:text-slate-200" dir="ltr">{faDigits(m.sender)}</span>
+                  <span>{formatTime(m.received_at)}</span>
+                </div>
+                <p className="mt-1 line-clamp-2 text-[13px] text-slate-700 dark:text-slate-300">{m.content}</p>
+              </div>;
+            },
+          })}
         />
         <StatTile
           icon={CheckCheck}
@@ -173,6 +215,21 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: PageId) => v
           sub={sentToday > 0 ? `امروز: ${faDigits(sentToday)} پیامک` : "امروز ارسالی نداشتید"}
           loading={!d.stats}
           color="bg-emerald-100 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300"
+          onClick={() => setModal({
+            title: "پیامک‌های ارسال‌شده",
+            icon: CheckCheck,
+            load: async () => (await apiRequest<{ entries: SentEntry[] }>("/api/history?status=active")).entries,
+            render: (row) => {
+              const e = row as SentEntry;
+              return <div>
+                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span className="fa-nums font-mono font-medium text-slate-700 dark:text-slate-200" dir="ltr">{faDigits(e.phone)}</span>
+                  <span>{new Date(e.sent_at).toLocaleString("fa-IR")}</span>
+                </div>
+                <p className="mt-1 line-clamp-2 text-[13px] text-slate-700 dark:text-slate-300">{e.message}</p>
+              </div>;
+            },
+          })}
         />
         <StatTile
           icon={Clock}
@@ -181,6 +238,21 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: PageId) => v
           sub="زمان‌بندی‌های در انتظار"
           loading={!d.stats}
           color="bg-amber-100 text-amber-600 dark:bg-amber-950/50 dark:text-amber-300"
+          onClick={() => setModal({
+            title: "زمان‌بندی‌های در انتظار",
+            icon: Clock,
+            load: async () => (await apiRequest<{ scheduled: ScheduledSms[] }>("/api/scheduled?status=pending")).scheduled,
+            render: (row) => {
+              const s = row as ScheduledSms;
+              return <div>
+                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span className="fa-nums font-mono font-medium text-slate-700 dark:text-slate-200" dir="ltr">{faDigits(s.mobile)}</span>
+                  <span>{new Date(s.scheduled_at_utc).toLocaleString("fa-IR")}</span>
+                </div>
+                <p className="mt-1 line-clamp-2 text-[13px] text-slate-700 dark:text-slate-300">{s.message}</p>
+              </div>;
+            },
+          })}
         />
         <StatTile
           icon={AlertTriangle}
@@ -189,6 +261,21 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: PageId) => v
           sub="زمان‌بندی‌های شکست خورده"
           loading={!d.stats}
           color="bg-red-100 text-red-600 dark:bg-red-950/50 dark:text-red-300"
+          onClick={() => setModal({
+            title: "ارسال‌های ناموفق",
+            icon: AlertTriangle,
+            load: async () => (await apiRequest<{ scheduled: ScheduledSms[] }>("/api/scheduled?status=failed")).scheduled,
+            render: (row) => {
+              const s = row as ScheduledSms;
+              return <div>
+                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span className="fa-nums font-mono font-medium text-slate-700 dark:text-slate-200" dir="ltr">{faDigits(s.mobile)}</span>
+                  <span>تلاش {faDigits(s.retries)}/{faDigits(s.max_retries)}</span>
+                </div>
+                <p className="mt-1 line-clamp-2 text-[13px] text-slate-700 dark:text-slate-300">{s.message}</p>
+              </div>;
+            },
+          })}
         />
       </div>
 
@@ -249,7 +336,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: PageId) => v
         ) : (
           <ul className="divide-y divide-slate-100 dark:divide-white/5">
             {d.recent.map((m) => {
-              const cat = getCategory(m.sender);
+              const cat = getCategoryMeta(m.category ?? "other");
               return (
                 <li key={m.id} className="flex items-center gap-3 py-3">
                   <span
@@ -280,6 +367,17 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: PageId) => v
           </ul>
         )}
       </BentoBox>
+
+      {modal && (
+        <RecordsModal
+          open
+          onClose={() => setModal(null)}
+          title={modal.title}
+          icon={modal.icon}
+          load={modal.load}
+          render={modal.render}
+        />
+      )}
     </div>
   );
 }

@@ -84,6 +84,50 @@
   .fa-nums {
     font-family: "Vazirmatn FD", "Vazirmatn", system-ui, sans-serif;
   }
+
+  /* اسکرول‌بار داخلی ظریف برای لیست‌ها */
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(148 163 184 / 0.5) transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgb(148 163 184 / 0.5);
+    border-radius: 8px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgb(148 163 184 / 0.8);
+  }
+  .dark .custom-scrollbar {
+    scrollbar-color: rgb(51 65 85 / 0.9) transparent;
+  }
+  .dark .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgb(51 65 85 / 0.9);
+  }
+}
+
+@layer components {
+  /* تقویت رندر react-multi-date-picker در هر دو حالت روشن/تاریک */
+  .rmdp-input {
+    color: hsl(var(--foreground)) !important;
+    background: hsl(var(--card)) !important;
+  }
+  .rmdp-calendar,
+  .rmdp-panel {
+    background: hsl(var(--card)) !important;
+  }
+  .rmdp-week-day,
+  .rmdp-day span {
+    color: hsl(var(--foreground));
+  }
+  .rmdp-day.rmdp-deactive span {
+    color: hsl(var(--muted-foreground));
+  }
 }
 
 @keyframes toast-in {

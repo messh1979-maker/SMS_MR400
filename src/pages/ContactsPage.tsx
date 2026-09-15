@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  Plus, Search, Edit, Trash2, Phone, MapPin, Building2, User, Loader2, Send
+  Plus, Search, Edit, Trash2, Phone, MapPin, Building2, User, Loader2, Send, Download, Upload
 } from "lucide-react";
 import Modal from "@/components/Modal";
 import ConfirmDialog from "@/components/ConfirmDialog";
@@ -10,7 +10,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { apiRequest } from "@/lib/api";
+import { BASE } from "@/lib/api";
 import { faDigits } from "@/lib/format";
+import { useDebouncedValue } from "@/lib/hooks";
 import { normalizeNumber } from "@/lib/sms";
 import { showToast } from "@/lib/toast";
 import type { ContactDetail } from "@/lib/types";
@@ -26,6 +28,7 @@ const EMPTY_CONTACT: ContactDetail = {
   department: "",
   company: "",
   province: "",
+  notes: "",
   created_at: "",
   updated_at: "",
 };
@@ -44,8 +47,53 @@ export default function ContactsPage({ onSendTo }: { onSendTo?: (c: ContactDetai
   const [formErrors, setFormErrors] = useState<Partial<Record<keyof ContactDetail, string>>>({});
   const [sortKey, setSortKey] = useState<keyof ContactDetail>("last_name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [importing, setImporting] = useState(false);
 
   useEffect(() => { loadContacts(); }, []);
+
+  async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`${BASE}/api/contacts/import`, {
+        method: "POST",
+        headers: { "X-API-Key": import.meta.env.VITE_API_KEY ?? "" },
+        body: fd,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data as { error?: string }).error ?? "خطا در بارگذاری فایل");
+      const msg = `ورود موفق: ${(data as { imported?: number }).imported ?? 0} رکورد ثبت شد` +
+        ((data as { skipped?: number }).skipped ? `, ${data.skipped} رکورد نامعتبر رد شد` : "");
+      showToast(msg);
+      await loadContacts();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "خطا در بارگذاری فایل", true);
+    } finally {
+      setImporting(false);
+      e.target.value = "";
+    }
+  }
+
+  async function handleExportFile() {
+    try {
+      const res = await fetch(`${BASE}/api/contacts/export`, {
+        headers: { "X-API-Key": import.meta.env.VITE_API_KEY ?? "" },
+      });
+      if (!res.ok) throw new Error("خطا در خروجی گرفتن فایل");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "contacts.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "خطا در خروجی", true);
+    }
+  }
 
   async function loadContacts() {
     setLoading(true);
@@ -141,30 +189,41 @@ export default function ContactsPage({ onSendTo }: { onSendTo?: (c: ContactDetai
     if (onSendTo) onSendTo(c);
   }
 
-  const filteredContacts = contacts.filter((c) => {
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    const qNum = normalizeNumber(search);
-    return (
-      c.first_name.toLowerCase().includes(q) ||
-      c.last_name.toLowerCase().includes(q) ||
-      c.mobile.includes(qNum) ||
-      c.company.toLowerCase().includes(q) ||
-      c.city.toLowerCase().includes(q)
-    );
-  });
+  const debouncedSearch = useDebouncedValue(search, 250);
+
+  const filteredContacts = useMemo(() => {
+    const q = debouncedSearch.trim().toLowerCase();
+    if (!q) return contacts;
+    const qNum = normalizeNumber(debouncedSearch);
+    const terms = q.split(/\s+/).filter(Boolean);
+    return contacts.filter((c) => {
+      const full = `${c.first_name} ${c.last_name}`.toLowerCase();
+      const fullRev = `${c.last_name} ${c.first_name}`.toLowerCase();
+      const namesMatch = terms.every((t) => full.includes(t) || fullRev.includes(t));
+      return namesMatch ||
+        (qNum && c.mobile.includes(qNum)) ||
+        c.company.toLowerCase().includes(q) ||
+        c.city.toLowerCase().includes(q) ||
+        c.department.toLowerCase().includes(q) ||
+        c.province.toLowerCase().includes(q);
+    });
+  }, [contacts, debouncedSearch]);
+
+  const sortedContacts = useMemo(
+    () =>
+      [...filteredContacts].sort((a, b) => {
+        const av = a[sortKey] ?? "";
+        const bv = b[sortKey] ?? "";
+        const cmp = String(av).localeCompare(String(bv), "fa");
+        return sortDir === "asc" ? cmp : -cmp;
+      }),
+    [filteredContacts, sortKey, sortDir]
+  );
 
 const toggleSort = (key: keyof ContactDetail) => {
     setSortDir((d) => (sortKey === key && d === "asc" ? "desc" : "asc"));
     setSortKey(key);
   };
-
-  const sortedContacts = [...filteredContacts].sort((a, b) => {
-    const av = a[sortKey] ?? "";
-    const bv = b[sortKey] ?? "";
-    const cmp = String(av).localeCompare(String(bv));
-    return sortDir === "asc" ? cmp : -cmp;
-  });
 
   function sortIndicator(key: keyof ContactDetail) {
     if (sortKey !== key) return " ↕";
@@ -185,12 +244,19 @@ const toggleSort = (key: keyof ContactDetail) => {
               className="pl-10 pr-4"
             />
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
             <Button variant="outline" size="sm" onClick={() => setViewMode("table")} className={viewMode === "table" ? "bg-blue-600 text-white" : ""}>
               جدول
             </Button>
             <Button variant="outline" size="sm" onClick={() => setViewMode("card")} className={viewMode === "card" ? "bg-blue-600 text-white" : ""}>
               کارت
+            </Button>
+            <input type="file" accept=".csv,.xlsx" className="hidden" id="import-file" onChange={handleImportFile} />
+            <label htmlFor="import-file" className={`inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer dark:border-white/10 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 ${importing ? "pointer-events-none opacity-60" : ""}`}>
+              <Upload className="h-3.5 w-3.5" /> ورودی
+            </label>
+            <Button variant="outline" size="sm" onClick={handleExportFile} className="gap-1.5">
+              <Download className="h-3.5 w-3.5" /> خروجی
             </Button>
             <Button onClick={openAddModal} className="gap-2" disabled={saving}>
               <Plus className="h-4 w-4" />

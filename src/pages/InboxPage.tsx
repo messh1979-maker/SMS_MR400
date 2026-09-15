@@ -4,8 +4,9 @@ import BentoBox from "@/components/BentoBox";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Skeleton from "@/components/Skeleton";
 import { Button } from "@/components/ui/button";
+import { getCategoryMeta } from "@/lib/categories";
 import { faDigits, formatTime } from "@/lib/format";
-import { findCategory, getCategory, normalizeNumber } from "@/lib/sms";
+import { getCategory, normalizeNumber } from "@/lib/sms";
 import { showToast } from "@/lib/toast";
 import { apiRequest } from "@/lib/api";
 import type { SmsMessage } from "@/lib/types";
@@ -43,7 +44,7 @@ export default function InboxPage() {
       : messages;
     const map = new Map<string, SmsMessage[]>();
     for (const m of filtered) {
-      const id = getCategory(m.sender).id;
+      const id = m.category || getCategory(m.sender).id;
       if (!map.has(id)) map.set(id, []);
       map.get(id)!.push(m);
     }
@@ -157,12 +158,15 @@ export default function InboxPage() {
           <p className="text-sm text-muted-foreground">پیامکی در صندوق نیست.</p>
         </BentoBox>
       ) : (
-        grouped.map(([catId, items]) => {
-          const cat = findCategory(catId);
+        <div className="custom-scrollbar max-h-[calc(100vh-15rem)] space-y-4 overflow-y-auto overscroll-contain pe-1">
+{grouped.map(([catId, items]) => {
+          const cat = getCategoryMeta(catId);
+          const Icon = cat.icon;
           return (
-<div key={catId} className="space-y-2">
+        <div key={catId} className="space-y-2">
             <div className="flex items-center gap-2 px-1">
               <span className={cn("h-2 w-2 rounded-full", cat.dot)} />
+              <Icon className={cn("h-3.5 w-3.5", cat.iconColor)} />
               <h3 className="text-xs font-bold text-slate-700 dark:text-slate-200">{cat.label}</h3>
               <span className="fa-nums text-[12px] font-medium text-muted-foreground">{faDigits(items.length)}</span>
             </div>
@@ -233,7 +237,8 @@ export default function InboxPage() {
             })}
           </div>
           );
-        })
+        })}
+        </div>
       )}
 
       <ConfirmDialog
