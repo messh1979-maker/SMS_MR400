@@ -182,7 +182,7 @@ const toggleSort = (key: keyof ContactDetail) => {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="جست‌وجو نام، نام خانوادگی، شرکت، موبایل..."
-              className="pr-4"
+              className="pl-10 pr-4"
             />
           </div>
           <div className="flex gap-2">
@@ -264,8 +264,8 @@ const toggleSort = (key: keyof ContactDetail) => {
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
                         {onSendTo && (
-                          <Button variant="default" size="sm" onClick={() => handleSendTo(c)} className="text-xs gap-1 bg-green-600 hover:bg-green-700" title="ارسال پیامک">
-                            <Phone className="h-3.5 w-3.5" /> ارسال
+                          <Button variant="ghost" size="sm" onClick={() => handleSendTo(c)} className="text-green-600 hover:bg-green-50 dark:hover:bg-green-950/20" title="ارسال پیامک">
+                            <Phone className="h-5 w-5" />
                           </Button>
                         )}
                         <Button variant="ghost" size="sm" onClick={() => openEditModal(c)} className="text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/20" title="ویرایش">

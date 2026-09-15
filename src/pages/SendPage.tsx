@@ -197,7 +197,8 @@ export default function SendPage({
               onChange={(e) => setMessage(e.target.value)}
               rows={5}
               dir="rtl"
-              className="w-full p-2 rounded-md border border-gray-300 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 placeholder:text-muted-foreground"
+              style={{ background: "var(--card)", color: "var(--foreground)" }}
+              className="w-full p-2 rounded-md border border-gray-300 placeholder:text-muted-foreground"
               placeholder="متن پیام خود را اینجا بنویسید..."
             />
             <div className="flex justify-between text-xs text-muted-foreground mt-1">

@@ -67,4 +67,4 @@ export type SendPrefill = {
   last_name?: string;
 };
 
-export type PageId = "dashboard" | "send" | "inbox" | "history" | "contacts" | "settings";
+export type PageId = "dashboard" | "send" | "inbox" | "history" | "contacts" | "settings" | "scheduled";

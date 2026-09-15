@@ -9,6 +9,7 @@ const TITLES: Record<PageId, { title: string; subtitle: string }> = {
   inbox: { title: "صندوق دریافت", subtitle: "پیامک‌های دریافتی از مودم" },
   history: { title: "تاریخچه و لاگ", subtitle: "پیامک‌های ارسال‌شده و خروجی فایل" },
   contacts: { title: "مخاطبین", subtitle: "شماره‌های پرتکرار و دسته‌بندی‌شده" },
+  scheduled: { title: "صف ارسال", subtitle: "پیامک‌های زمان‌بندی‌شده و وضعیت تلاش‌ها" },
   settings: { title: "تنظیمات و API", subtitle: "اتصال، پیکربندی و مستندات" },
 };
 

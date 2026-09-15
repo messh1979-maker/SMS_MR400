@@ -8,6 +8,7 @@ import SendPage from "@/pages/SendPage";
 import InboxPage from "@/pages/InboxPage";
 import HistoryPage from "@/pages/HistoryPage";
 import ContactsPage from "@/pages/ContactsPage";
+import ScheduledPage from "@/pages/ScheduledPage";
 import SettingsPage from "@/pages/SettingsPage";
 import { showToast } from "@/lib/toast";
 import { apiRequest } from "@/lib/api";
@@ -90,6 +91,7 @@ export default function App() {
           {page === "inbox" && <InboxPage key={refreshNonce} />}
           {page === "history" && <HistoryPage key={refreshNonce} />}
           {page === "contacts" && <ContactsPage key={refreshNonce} onSendTo={handleSendTo} />}
+          {page === "scheduled" && <ScheduledPage key={refreshNonce} />}
           {page === "settings" && <SettingsPage key={refreshNonce} />}
         </main>
       </div>

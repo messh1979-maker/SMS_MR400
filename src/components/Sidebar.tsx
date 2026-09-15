@@ -8,6 +8,7 @@ import {
   Inbox,
   Users,
   Send,
+  Clock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PageId } from "@/lib/types";
@@ -18,6 +19,7 @@ const NAV: { id: PageId; label: string; icon: typeof Send }[] = [
   { id: "inbox", label: "صندوق دریافت", icon: Inbox },
   { id: "history", label: "تاریخچه و لاگ", icon: History },
   { id: "contacts", label: "مخاطبین", icon: Users },
+  { id: "scheduled", label: "صف ارسال", icon: Clock },
   { id: "settings", label: "تنظیمات و API", icon: Settings },
 ];
 
