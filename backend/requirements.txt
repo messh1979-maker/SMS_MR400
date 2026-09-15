@@ -6,3 +6,4 @@ tplinkrouterc6u
 APScheduler==3.11.3
 jdatetime==6.1.0
 openpyxl==3.1.5
+xlrd==2.0.2

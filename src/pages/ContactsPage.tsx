@@ -251,7 +251,7 @@ const toggleSort = (key: keyof ContactDetail) => {
             <Button variant="outline" size="sm" onClick={() => setViewMode("card")} className={viewMode === "card" ? "bg-blue-600 text-white" : ""}>
               کارت
             </Button>
-            <input type="file" accept=".csv,.xlsx" className="hidden" id="import-file" onChange={handleImportFile} />
+            <input type="file" accept=".csv,.xlsx,.xls" className="hidden" id="import-file" onChange={handleImportFile} />
             <a
               href="/contacts_import_template.xlsx"
               download="contacts_import_template.xlsx"

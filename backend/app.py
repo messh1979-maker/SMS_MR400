@@ -549,7 +549,10 @@ def api_contacts_import():
     if kind is None:
         return jsonify({"error": "فرمت فایل مجاز نیست (.xlsx یا .csv)"}), 400
 
-    rows = list(parse_rows(blob, kind))
+    try:
+        rows = list(parse_rows(blob, kind))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     if not rows:
         return jsonify({"error": "فایل خالی است"}), 400
     headers = list(map(str.strip, rows[0]))
@@ -564,8 +567,10 @@ def api_contacts_import():
         rec = dict(zip(cols, raw + [None] * (len(cols) - len(raw))))
         first = str(rec.get("first_name") or "").strip()
         last = str(rec.get("last_name") or "").strip()
-        mobile = re.sub(r"[^0-9]", "", str(rec.get("mobile") or "").strip())
-        if not first or not _valid_phone(mobile):
+        mobile = re.sub(r"[^0-9]", "", _latin_digits(str(rec.get("mobile") or "").strip()))
+        if len(mobile) == 10 and mobile.startswith("9"):
+            mobile = "0" + mobile  # اکسل صفر ابتدایی را در ستون عددی حذف می‌کند
+        if not first or not mobile or not _valid_phone(mobile):
             skipped += 1
             continue
         conn.execute("""INSERT OR IGNORE INTO contacts
