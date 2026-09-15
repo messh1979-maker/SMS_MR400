@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Plus, Search, Edit, Trash2, Phone, MapPin, Building2, User, Loader2, Send, Download, Upload
+  Plus, Search, Edit, Trash2, Phone, MapPin, Building2, User, Loader2, Send, Download, Upload, FileSpreadsheet
 } from "lucide-react";
 import Modal from "@/components/Modal";
 import ConfirmDialog from "@/components/ConfirmDialog";
@@ -252,6 +252,14 @@ const toggleSort = (key: keyof ContactDetail) => {
               کارت
             </Button>
             <input type="file" accept=".csv,.xlsx" className="hidden" id="import-file" onChange={handleImportFile} />
+            <a
+              href="/contacts_import_template.xlsx"
+              download="contacts_import_template.xlsx"
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+              title="قالب اکسل ورود اطلاعات"
+            >
+              <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" /> قالب
+            </a>
             <label htmlFor="import-file" className={`inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer dark:border-white/10 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 ${importing ? "pointer-events-none opacity-60" : ""}`}>
               <Upload className="h-3.5 w-3.5" /> ورودی
             </label>
